@@ -71,7 +71,7 @@ temp/
 # ==========================
 *.sqlite
 *.sqlite3
-*.db
+
 
 # PostgreSQL dumps
 *.sql.gz
