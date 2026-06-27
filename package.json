@@ -1,0 +1,19 @@
+{
+  "name": "vergepay_api",
+  "version": "1.0.0",
+  "description": "fintech app for payments and ledger balances",
+  "main": "app.js",
+  "type": "module",
+  "scripts": {
+    "start-dev": "nodemon app.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "dunascode",
+  "license": "ISC",
+  "devDependencies": {
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "nodemon": "^3.1.14",
+    "pg": "^8.22.0"
+  }
+}
