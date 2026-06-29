@@ -1,0 +1,67 @@
+<svg viewBox="0 0 1400 760" xmlns="http://www.w3.org/2000/svg" font-family="Arial, Helvetica, sans-serif">
+  <defs>
+    <marker id="arrow2" markerWidth="14" markerHeight="14" refX="10" refY="7" orient="auto">
+      <path d="M1,1 L10,7 L1,13" fill="none" stroke="#1f9d61" stroke-width="1.6"/>
+    </marker>
+  </defs>
+  <rect width="1400" height="760" fill="#ffffff"/>
+  <text x="700" y="36" text-anchor="middle" font-size="22" font-weight="700" fill="#1a2c3d">Why the Ledger Replaces "balance" as a Stored Field</text>
+  <text x="700" y="58" text-anchor="middle" font-size="13" fill="#647688">Worked example: Seyi sends &#8358;5,000 to Feranmi &#8212; one business transaction, two immutable ledger rows</text>
+
+  <!-- Step 1: the transaction event -->
+  <rect x="60" y="100" width="380" height="120" rx="10" fill="#eef5fb" stroke="#2c6fa6" stroke-width="2"/>
+  <text x="80" y="128" font-size="14" font-weight="700" fill="#1a2c3d">1. TRANSACTION row (the event)</text>
+  <text x="80" y="152" font-size="12" fill="#41566b">transaction_id: TXN_8841</text>
+  <text x="80" y="170" font-size="12" fill="#41566b">sender_account_id: ACC_SEYI_001</text>
+  <text x="80" y="188" font-size="12" fill="#41566b">receiver_account_id: ACC_FERANMI_009</text>
+  <text x="80" y="206" font-size="12" fill="#41566b">amount_minor: 500000  (kobo)  &#8226; status: SETTLED</text>
+
+  <!-- arrow down to ledger entries -->
+  <path d="M250,220 L250,270" fill="none" stroke="#1f9d61" stroke-width="2" marker-end="url(#arrow2)"/>
+  <text x="262" y="250" font-size="11" fill="#1f9d61" font-style="italic">generates exactly 2 rows</text>
+
+  <!-- Step 2: two ledger entries side by side -->
+  <rect x="60" y="280" width="380" height="150" rx="10" fill="#fdeeee" stroke="#b03a3a" stroke-width="2"/>
+  <text x="80" y="306" font-size="14" font-weight="700" fill="#1a2c3d">2a. LEDGER_ENTRY &#8212; DEBIT</text>
+  <text x="80" y="330" font-size="12" fill="#41566b">entry_id: LE_19031</text>
+  <text x="80" y="348" font-size="12" fill="#41566b">account_id: ACC_SEYI_001</text>
+  <text x="80" y="366" font-size="12" fill="#41566b">txn_id: TXN_8841</text>
+  <text x="80" y="384" font-size="12" fill="#41566b">direction: DEBIT &#8226; amount_minor: 500000</text>
+  <text x="80" y="402" font-size="12" font-weight="700" fill="#a33">running_balance_after: 1,240,000</text>
+
+  <rect x="500" y="280" width="380" height="150" rx="10" fill="#eafaf1" stroke="#1f9d61" stroke-width="2"/>
+  <text x="520" y="306" font-size="14" font-weight="700" fill="#1a2c3d">2b. LEDGER_ENTRY &#8212; CREDIT</text>
+  <text x="520" y="330" font-size="12" fill="#41566b">entry_id: LE_19032</text>
+  <text x="520" y="348" font-size="12" fill="#41566b">account_id: ACC_FERANMI_009</text>
+  <text x="520" y="366" font-size="12" fill="#41566b">txn_id: TXN_8841</text>
+  <text x="520" y="384" font-size="12" fill="#41566b">direction: CREDIT &#8226; amount_minor: 500000</text>
+  <text x="520" y="402" font-size="12" font-weight="700" fill="#1f9d61">running_balance_after: 318,500</text>
+
+  <!-- balance rule -->
+  <rect x="940" y="280" width="400" height="150" rx="10" fill="#fafbfc" stroke="#dfe5ea" stroke-width="2"/>
+  <text x="960" y="306" font-size="14" font-weight="700" fill="#1a2c3d">The invariant this guarantees</text>
+  <text x="960" y="332" font-size="12.5" fill="#1a2c3d">SUM(debits) for TXN_8841</text>
+  <text x="960" y="350" font-size="12.5" fill="#1a2c3d">&#160;&#160;&#160;&#160;= SUM(credits) for TXN_8841</text>
+  <text x="960" y="372" font-size="12.5" fill="#1a2c3d">500,000 = 500,000 (balanced)</text>
+  <text x="960" y="398" font-size="11.5" fill="#647688">If a bug ever writes only one side,</text>
+  <text x="960" y="414" font-size="11.5" fill="#647688">a reconciliation job catches it instantly</text>
+  <text x="960" y="430" font-size="11.5" fill="#647688">&#8212; money can never silently vanish.</text>
+
+  <!-- arrow down to derived balance -->
+  <path d="M250,430 L250,480" fill="none" stroke="#1f9d61" stroke-width="2" marker-end="url(#arrow2)"/>
+  <path d="M690,430 L690,480" fill="none" stroke="#1f9d61" stroke-width="2" marker-end="url(#arrow2)"/>
+
+  <!-- step 3 derived balance -->
+  <rect x="60" y="490" width="820" height="110" rx="10" fill="#f1eef7" stroke="#6a4c93" stroke-width="2"/>
+  <text x="80" y="518" font-size="14" font-weight="700" fill="#1a2c3d">3. ACCOUNT.balance is never written directly &#8212; it is a derived/cached value</text>
+  <text x="80" y="544" font-size="12.5" fill="#41566b" font-family="Consolas, Menlo, monospace">SELECT running_balance_after FROM ledger_entry</text>
+  <text x="80" y="564" font-size="12.5" fill="#41566b" font-family="Consolas, Menlo, monospace">WHERE account_id = :id ORDER BY created_at DESC LIMIT 1;</text>
+  <text x="80" y="586" font-size="11" fill="#647688" font-style="italic">In production this is cached on ACCOUNT for fast reads, but the ledger is always the source of truth used to rebuild it.</text>
+
+  <!-- bottom note -->
+  <rect x="60" y="630" width="1280" height="100" rx="10" fill="#fff6e8" stroke="#c98a2e" stroke-width="2"/>
+  <text x="80" y="656" font-size="13.5" font-weight="700" fill="#1a2c3d">What this fixes from the original design</text>
+  <text x="80" y="680" font-size="12" fill="#41566b">Original: ACCOUNT.transaction / Debit_Transaction / Credit_Transaction stored as in-row lists of IDs &#8212; this breaks 1NF, can't be</text>
+  <text x="80" y="698" font-size="12" fill="#41566b">indexed or joined efficiently, and has no way to guarantee the two sides of a transfer ever match. The ledger pattern fixes all three</text>
+  <text x="80" y="716" font-size="12" fill="#41566b">by making each movement its own row, queryable with a normal foreign key, and mathematically self-checking.</text>
+</svg>
