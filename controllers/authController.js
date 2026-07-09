@@ -3,12 +3,22 @@ import bcrypt from "bcrypt";
 import z from "zod";
 import logger from "../logger.js";
 import crypto from "crypto";
+import AppError from "../utils/appError.js";
+import {
+  BadRequestError,
+  ValidationError,
+  ConflictError,
+} from "../utils/errorStr.js";
 
 export const registerUser = async (req, res, next) => {
   if (!req.body) {
-    return res.status(400).json({
-      mesage: "request body empty",
+    const err = new BadRequestError({
+      message: "Request body is empty.",
+      details: {
+        body: "Request body cannot be empty. Expected a JSON payload.",
+      },
     });
+    throw err;
   }
 
   const registerSchema = z.object({
@@ -67,11 +77,12 @@ export const registerUser = async (req, res, next) => {
   const validation = registerSchema.safeParse(req.body);
 
   if (!validation.success) {
-    logger.error(validation.error.flatten().fieldErrors);
-    return res
-      .status(400)
-      .json({ success: false, errors: validation.error.flatten().fieldErrors });
+    const err = new ValidationError({
+      details: validation.error.flatten().fieldErrors,
+    });
+    throw err;
   }
+
   const {
     username,
     email,
@@ -94,10 +105,10 @@ export const registerUser = async (req, res, next) => {
     [email],
   );
   if (emailExist.rowCount > 0) {
-    return res.status(409).json({
-      success: false,
-      message: "An account with this email already exists.",
+    const err = new ConflictError({
+      message: "A user with this email already exists",
     });
+    throw err;
   }
   const usernameExist = await pool.query(
     `SELECT user_id
@@ -106,16 +117,19 @@ export const registerUser = async (req, res, next) => {
     [username],
   );
   if (usernameExist.rowCount > 0) {
-    return res.status(409).json({
-      status: "failed",
-      message: "An account with this username already exists",
+    const err = new ConflictError({
+      message: "A user with this username already exists",
     });
+    throw err;
   }
   const hashedPassword = await bcrypt.hash(password, 12);
+  const requestHash = crypto
+    .createHash("sha256")
+    .update(JSON.stringify(req.body))
+    .digest("hex");
 
-  try {
-    const result = await pool.query(
-      `
+  const result = await pool.query(
+    `
       INSERT INTO users (
           username,
           email,
@@ -143,41 +157,33 @@ export const registerUser = async (req, res, next) => {
           account_status,
           two_factor_enabled,
           created_at; `,
-      [
-        username,
-        email,
-        hashedPassword,
-        first_name,
-        last_name,
-        date_of_birth,
-        present_addr,
-        permanent_addr,
-        city,
-        postal_code,
-        country_code,
-        default_currency_code,
-        timezone,
-      ],
-    );
-    logger.info("Registering user", {
-      requestId: req.requestId,
+    [
+      username,
       email,
-    });
+      hashedPassword,
+      first_name,
+      last_name,
+      date_of_birth,
+      present_addr,
+      permanent_addr,
+      city,
+      postal_code,
+      country_code,
+      default_currency_code,
+      timezone,
+    ],
+  );
 
-    const requestHash = crypto
-      .createHash("sha256")
-      .update(JSON.stringify(req.body))
-      .digest("hex");
-    const response = await {
-      user_id: result.rows[0].user_id,
-      email: result.rows[0].email,
-      kyc_status: result.rows[0].kyc_status,
-      account_status: result.rows[0].account_status,
-      two_factor_enabled: result.rows[0].two_factor_enabled,
-      created_at: result.rows[0].created_at,
-    };
-    await pool.query(
-      `
+  const response = await {
+    user_id: result.rows[0].user_id,
+    email: result.rows[0].email,
+    kyc_status: result.rows[0].kyc_status,
+    account_status: result.rows[0].account_status,
+    two_factor_enabled: result.rows[0].two_factor_enabled,
+    created_at: result.rows[0].created_at,
+  };
+  await pool.query(
+    `
         INSERT INTO idempotency_keys
         (
         key,
@@ -189,39 +195,15 @@ export const registerUser = async (req, res, next) => {
         VALUES
         ($1,$2,$3,$4,NOW()+INTERVAL '24 HOURS')
         `,
-      [req.idempotencyKey, requestHash, response, 201],
-    );
-    logger.info("Registering user", {
-      idempotencyKey: req.idempotencyKey,
-      email,
-    });
+    [req.idempotencyKey, requestHash, response, 201],
+  );
 
-    return res.status(201).json(response);
-  } catch (err) {
-    logger.info("Internal DB err", err.message);
-    const requestHash = crypto
-      .createHash("sha256")
-      .update(JSON.stringify(req.body))
-      .digest("hex");
-    await pool.query(
-      `
-        INSERT INTO idempotency_keys
-        (
-        key,
-        request_hash,
-        response,
-        status_code,
-        expires_at
-        )
-        VALUES
-        ($1,$2,$3,$4,NOW()+INTERVAL '24 HOURS')
-        `,
-      [req.idempotencyKey, requestHash, JSON.stringify(err), 201],
-    );
-    res.status(501).json({
-      status: message,
-      message: "Internal Server Error",
-    });
-  }
+  logger.info("Registering user", {
+    idempotencyKey: req.idempotencyKey,
+    requestId: req.requestId,
+    email,
+  });
+
+  return res.status(201).json(response);
   next();
 };
