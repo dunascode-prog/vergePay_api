@@ -29,8 +29,13 @@ export class NotFoundError extends AppError {
 }
 
 export class ConflictError extends AppError {
-  constructor({ message = "Resource already exists" } = {}) {
-    super({ message: message, statusCode: 409, code: "CONFLICT" });
+  constructor({ message = "Resource already exists", field = null } = {}) {
+    super({
+      message: message,
+      statusCode: 409,
+      code: "CONFLICT",
+      field: field,
+    });
   }
 }
 
@@ -59,5 +64,29 @@ export class TooManyRequestsError extends AppError {
 export class InternalServerError extends AppError {
   constructor({ message = "Internal server error" } = {}) {
     super({ message: message, statusCode: 500, code: "INTERNAL_SERVER_ERROR" });
+  }
+}
+
+export class DatabaseError extends AppError {
+  constructor({ message = "A database error occurred.", details = null } = {}) {
+    super({
+      message,
+      statusCode: 500,
+      code: "DATABASE_ERROR",
+      details,
+    });
+  }
+}
+export class ServiceUnavailableError extends AppError {
+  constructor({
+    message = "Service temporarily unavailable.",
+    details = null,
+  } = {}) {
+    super({
+      message,
+      statusCode: 503,
+      code: "SERVICE_UNAVAILABLE",
+      details,
+    });
   }
 }

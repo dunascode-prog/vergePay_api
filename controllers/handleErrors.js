@@ -8,6 +8,17 @@ export const handleErrors = (err, req, res, next) => {
     statusCode: err.statusCode,
   });
   if (err.isOperational) {
+    if (err.code === "CONFLICT") {
+      return res.status(err.statusCode).json({
+        status: "failed",
+        error: {
+          code: err.code,
+          field: err.field,
+          message: err.message,
+          ...(err.details && { details: err.details }),
+        },
+      });
+    }
     return res.status(err.statusCode).json({
       status: "failed",
       error: {
