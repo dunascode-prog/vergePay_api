@@ -28,8 +28,10 @@ export const handleErrors = (err, req, res, next) => {
       },
     });
   }
+  console.log(err);
   return res.status(500).json({
     status: "failed",
+    message: err.message,
     error: {
       code: "INTERNAL_SERVER_ERROR",
       message: "SOMETHING WENT WRONG",
