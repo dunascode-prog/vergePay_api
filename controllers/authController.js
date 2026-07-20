@@ -4,210 +4,17 @@ import z from "zod";
 import logger from "../logger.js";
 import crypto from "crypto";
 import AppError from "../utils/appError.js";
+import env from "../env.js";
 import {
   BadRequestError,
   ValidationError,
   ConflictError,
   ForbiddenError,
+  NotFoundError,
+  UnauthorizedError,
 } from "../utils/errorStr.js";
-
-export const registerUser = async (req, res, next) => {
-  if (!req.body) {
-    const err = new BadRequestError({
-      message: "Request body is empty.",
-      details: {
-        body: "Request body cannot be empty. Expected a JSON payload.",
-      },
-    });
-    throw err;
-  }
-
-  const registerSchema = z.object({
-    username: z
-      .string()
-      .trim()
-      .min(3, "Username must be at least 3 characters.")
-      .max(30, "Username cannot exceed 30 characters.")
-      .regex(
-        /^[a-zA-Z0-9_]+$/,
-        "Username may only contain letters, numbers and underscores.",
-      ),
-
-    email: z.string().trim().toLowerCase().email("Invalid email address."),
-    password: z
-      .string()
-      .min(12, "Password must be at least 12 characters.")
-      .max(128)
-      .regex(/[A-Z]/, "Password must contain an uppercase letter.")
-      .regex(/[a-z]/, "Password must contain a lowercase letter.")
-      .regex(/[0-9]/, "Password must contain a number.")
-      .regex(
-        /[!@#$%^&*(),.?":{}|<>_\-+=/\\[\]';`~]/,
-        "Password must contain a special character.",
-      ),
-
-    first_name: z.string().trim().min(2).max(80),
-
-    last_name: z.string().trim().min(2).max(80),
-
-    date_of_birth: z.string().date(),
-
-    present_addr: z.string().trim().min(5).max(255),
-
-    permanent_addr: z.string().trim().min(5).max(255),
-
-    city: z.string().trim().min(2).max(100),
-
-    postal_code: z.string().trim().max(20).optional(),
-
-    country_code: z
-      .string()
-      .trim()
-      .length(2, "Country code must be ISO-3166 alpha-2.")
-      .toUpperCase(),
-
-    default_currency_code: z
-      .string()
-      .trim()
-      .length(3, "Currency must be ISO-4217.")
-      .toUpperCase(),
-
-    timezone: z.string().trim().min(3).max(50),
-  });
-
-  const validation = registerSchema.safeParse(req.body);
-
-  if (!validation.success) {
-    const err = new ValidationError({
-      details: validation.error.flatten().fieldErrors,
-    });
-    throw err;
-  }
-
-  const {
-    username,
-    email,
-    password,
-    first_name,
-    last_name,
-    present_addr,
-    permanent_addr,
-    date_of_birth,
-    city,
-    postal_code,
-    country_code,
-    default_currency_code,
-    timezone,
-  } = validation.data;
-  const emailExist = await pool.query(
-    `SELECT user_id
-  FROM users
-  WHERE email=$1`,
-    [email],
-  );
-  if (emailExist.rowCount > 0) {
-    const err = new ConflictError({
-      message: "A user with this email already exists",
-    });
-    throw err;
-  }
-  const usernameExist = await pool.query(
-    `SELECT user_id
-  FROM users
-  WHERE username=$1`,
-    [username],
-  );
-  if (usernameExist.rowCount > 0) {
-    const err = new ConflictError({
-      message: "A user with this username already exists",
-    });
-    throw err;
-  }
-  const hashedPassword = await bcrypt.hash(password, 12);
-  const requestHash = crypto
-    .createHash("sha256")
-    .update(JSON.stringify(req.body))
-    .digest("hex");
-
-  const result = await pool.query(
-    `
-      INSERT INTO users (
-          username,
-          email,
-          password_hash,
-          first_name,
-          last_name,
-          date_of_birth,
-          present_addr,
-          permanent_addr,
-          city,
-          postal_code,
-          country_code,
-          default_currency_code,
-          timezone
-      )
-      VALUES (
-          $1, $2, $3, $4, $5, $6,
-          $7, $8, $9, $10, $11, $12, $13
-      )
-      RETURNING
-          user_id,
-          username,
-          email,
-          kyc_status,
-          account_status,
-          two_factor_enabled,
-          created_at; `,
-    [
-      username,
-      email,
-      hashedPassword,
-      first_name,
-      last_name,
-      date_of_birth,
-      present_addr,
-      permanent_addr,
-      city,
-      postal_code,
-      country_code,
-      default_currency_code,
-      timezone,
-    ],
-  );
-
-  const response = await {
-    user_id: result.rows[0].user_id,
-    email: result.rows[0].email,
-    kyc_status: result.rows[0].kyc_status,
-    account_status: result.rows[0].account_status,
-    two_factor_enabled: result.rows[0].two_factor_enabled,
-    created_at: result.rows[0].created_at,
-  };
-  await pool.query(
-    `
-        INSERT INTO idempotency_keys
-        (
-        key,
-        request_hash,
-        response,
-        status_code,
-        expires_at
-        )
-        VALUES
-        ($1,$2,$3,$4,NOW()+INTERVAL '24 HOURS')
-        `,
-    [req.idempotencyKey, requestHash, response, 201],
-  );
-
-  logger.info("Registering user", {
-    idempotencyKey: req.idempotencyKey,
-    requestId: req.requestId,
-    email,
-  });
-
-  return res.status(201).json(response);
-  next();
-};
+import { createAccessToken, createRefreshToken } from "../utils/jwt.js";
+import jwt from "jsonwebtoken";
 
 export const signUp = async (req, res, nex) => {
   if (!req.body) {
@@ -251,6 +58,7 @@ export const signUp = async (req, res, nex) => {
       path: ["confirmPassword"],
     });
   const validation = registerSchema.safeParse(req.body);
+
   if (!validation.success) {
     const err = new ValidationError({
       details: validation.error.flatten().fieldErrors,
@@ -258,30 +66,6 @@ export const signUp = async (req, res, nex) => {
     throw err;
   }
   const { username, email, password } = validation.data;
-  // const emailExist = await pool.query(
-  //   `SELECT user_id
-  // FROM users
-  // WHERE email=$1`,
-  //   [email],
-  // );
-  // if (emailExist.rowCount > 0) {
-  //   const err = new ConflictError({
-  //     message: "A user with this email already exists",
-  //   });
-  //   throw err;
-  // }
-  // const usernameExist = await pool.query(
-  //   `SELECT user_id
-  // FROM users
-  // WHERE username=$1`,
-  //   [username],
-  // );
-  // if (usernameExist.rowCount > 0) {
-  //   const err = new ConflictError({
-  //     message: "A user with this username already exists",
-  //   });
-  //   throw err;
-  // }
   const hashedPassword = await bcrypt.hash(password, 12);
   const requestHash = crypto
     .createHash("sha256")
@@ -312,27 +96,27 @@ export const signUp = async (req, res, nex) => {
       email: result.rows[0].email,
       created_at: result.rows[0].created_at,
     };
-    await pool.query(
-      `
-        INSERT INTO idempotency_keys
-        (
-        key,
-        request_hash,
-        response,
-        status_code,
-        expires_at
-        )
-        VALUES
-        ($1,$2,$3,$4,NOW()+INTERVAL '24 HOURS')
-        `,
-      [req.idempotencyKey, requestHash, response, 201],
-    );
+    // await pool.query(
+    //   `
+    //     INSERT INTO idempotency_keys
+    //     (
+    //     key,
+    //     request_hash,
+    //     response,
+    //     status_code,
+    //     expires_at
+    //     )
+    //     VALUES
+    //     ($1,$2,$3,$4,NOW()+INTERVAL '24 HOURS')
+    //     `,
+    //   [req.idempotencyKey, requestHash, response, 201],
+    // );
 
-    logger.info("account created", {
-      idempotencyKey: req.idempotencyKey,
-      requestId: req.requestId,
-      email,
-    });
+    // logger.info("account created", {
+    //   idempotencyKey: req.idempotencyKey,
+    //   requestId: req.requestId,
+    //   email,
+    // });
 
     return res.status(201).json(response);
     next();
@@ -416,3 +200,235 @@ export const signUp = async (req, res, nex) => {
     }
   }
 };
+
+export const signIn = async (req, res, next) => {
+  if (!req.body) {
+    const err = new BadRequestError({
+      message: "Request body is empty.",
+      details: {
+        body: "Request body cannot be empty. Expected a JSON payload.",
+      },
+    });
+    throw err;
+  }
+
+  const signinSchema = z.object({
+    email: z.string().trim().toLowerCase().email("Invalid email address."),
+    password: z.string().min(1, "Password is required."),
+  });
+  const validation = signinSchema.safeParse(req.body);
+  if (!validation.success) {
+    const err = new ValidationError({
+      details: validation.error.flatten().fieldErrors,
+    });
+    throw err;
+  }
+  const { email, password } = validation.data;
+
+  let user = await pool.query(
+    `SELECT
+    user_id,
+    email,
+    password_hash
+    FROM users
+    WHERE email = $1
+    `,
+    [email.toLowerCase()],
+  );
+
+  if (user.rowCount === 0) {
+    throw new UnauthorizedError({
+      message: "Invalid email or password",
+    });
+  }
+
+  user = user.rows[0];
+
+  const verify = await bcrypt.compare(password, user.password_hash);
+  if (!verify) {
+    throw new UnauthorizedError({
+      message: "Invalid email or password",
+    });
+  }
+
+  const payload = { sub: user.user_id, email: user.email };
+  const { accessSecret, refreshSecret, accessExpiry, refreshExpiry } =
+    env.jwtdet;
+  const accessToken = createAccessToken(payload, accessSecret, accessExpiry);
+  const refreshToken = createRefreshToken(
+    payload,
+    refreshSecret,
+    refreshExpiry,
+  );
+
+  const tokenHash = crypto
+    .createHash("sha256")
+    .update(refreshToken)
+    .digest("hex");
+
+  await pool.query(
+    `
+    INSERT INTO refresh_tokens (
+        user_id,
+        token_hash,
+        expires_at
+    )
+    VALUES ($1, $2, NOW() + INTERVAL '30 days')
+  `,
+    [user.user_id, tokenHash],
+  );
+
+  res.cookie("access_token", accessToken, {
+    httpOnly: true,
+    secure: env.nodeEnv === "production",
+    sameSite: "strict",
+    maxAge: 15 * 60 * 1000,
+  });
+
+  res.cookie("refresh_token", refreshToken, {
+    httpOnly: true,
+    secure: env.nodeEnv === "production",
+    sameSite: "strict",
+    maxAge: 30 * 24 * 60 * 60 * 1000,
+  });
+
+  return res.status(200).json({
+    success: true,
+    message: "Login successful.",
+    user: {
+      user_id: user.user_id,
+      username: user.username,
+      email: user.email,
+      kyc_status: user.kyc_status,
+    },
+  });
+};
+
+export function test(req, res, next) {
+  console.log("test");
+  return res.status(200).json(req.user);
+}
+
+export async function refreshToken(req, res, next) {
+  const refreshToken = req.cookies["refresh_token"];
+
+  if (!refreshToken) {
+    throw new UnauthorizedError({ message: "Refresh token missing." });
+  }
+
+  let payload;
+
+  try {
+    payload = jwt.verify(refreshToken, env.jwtdet.refreshSecret);
+  } catch (err) {
+    console.log(err);
+    throw new UnauthorizedError({
+      message: "Refresh token expired or invalid.",
+    });
+  }
+
+  const tokenHash = crypto
+    .createHash("sha256")
+    .update(refreshToken)
+    .digest("hex");
+
+  const storedToken = await pool.query(
+    `
+    SELECT
+        refresh_token_id,
+        user_id,
+        expires_at,
+        revoked_at
+    FROM refresh_tokens
+    WHERE token_hash = $1
+    LIMIT 1;
+    `,
+    [tokenHash],
+  );
+
+  if (storedToken.rowCount === 0) {
+    throw new ForbiddenError({ message: "Refresh token has been revoked." });
+  }
+  const user = await pool.query(
+    `SELECT
+    user_id,
+    email
+FROM users
+WHERE user_id = $1;
+  `,
+    [storedToken.rows[0].user_id],
+  );
+
+  if (user.rowCount === 0) {
+    throw new UnauthorizedError({ message: "User not found." });
+  }
+
+  const pay_l = user.rows[0];
+
+  const newAccessToken = createAccessToken(
+    {
+      sub: pay_l.user_id,
+      email: pay_l.email,
+    },
+    env.jwtdet.accessSecret,
+    env.jwtdet.accessExpiry,
+  );
+
+  const newRefreshToken = createRefreshToken(
+    {
+      sub: pay_l.user_id,
+      email: pay_l.email,
+    },
+    env.jwtdet.refreshSecret,
+    env.jwtdet.refreshExpiry,
+  );
+
+  await pool.query(
+    `
+  DELETE FROM refresh_tokens
+  WHERE token_hash = $1;
+  `,
+    [tokenHash],
+  );
+
+  const newRefreshHash = crypto
+    .createHash("sha256")
+    .update(newRefreshToken)
+    .digest("hex");
+
+  const result = await pool.query(
+    `
+  INSERT INTO refresh_tokens (
+      user_id,
+      token_hash,
+      expires_at
+  )
+  VALUES (
+      $1,
+      $2,
+      NOW() + INTERVAL '30 days'
+  )
+  RETURNING *;
+  `,
+    [pay_l.user_id, newRefreshHash],
+  );
+
+  res.cookie("access_token", newAccessToken, {
+    httpOnly: true,
+    secure: env.nodeEnv === "production",
+    sameSite: "strict",
+    maxAge: 15 * 60 * 1000,
+  });
+
+  res.cookie("refresh_token", newRefreshToken, {
+    httpOnly: true,
+    secure: env.nodeEnv === "production",
+    sameSite: "strict",
+    maxAge: 30 * 24 * 60 * 60 * 1000,
+  });
+
+  res.status(200).json({
+    success: true,
+    message: "Access token refreshed successfully.",
+  });
+}

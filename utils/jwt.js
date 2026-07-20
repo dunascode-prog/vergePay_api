@@ -1,32 +1,36 @@
 import jwt from "jsonwebtoken";
-import {
-  accessSecret,
-  refreshSecret,
-  accessExpiry,
-  refreshExpiry,
-} from "../env.js";
-
-export function createAccessToken(user) {
-  const token = jwt.sign(
-    {
-      id: user.id,
-      password: user.password,
-      email: user.email,
-    },
-    accessSecret,
-    { expiresIn: accessExpiry },
-  );
+import env from "../env.js";
+import { TokenExpiredError, UnauthorizedError } from "./errorStr.js";
+export function createAccessToken(payload, accessSecret, accessExpiry) {
+  const token = jwt.sign(payload, accessSecret, {
+    expiresIn: accessExpiry,
+    issuer: "VergePay",
+    audience: "vergepay-api",
+  });
   return token;
 }
 
-export function refreshToken(user) {
-  const token = jwt.sign(
-    {
-      id: user.id,
-      password: user.password,
-      email: user.email,
-    },
-    refreshSecret,
-    { expiresIn: refreshExpiry },
-  );
+export function createRefreshToken(payload, refreshSecret, refreshExpiry) {
+  const token = jwt.sign(payload, refreshSecret, {
+    expiresIn: refreshExpiry,
+    issuer: "VergePay",
+    audience: "vergepay-api",
+  });
+  return token;
+}
+
+export function verifyAccessToken(req, res, next) {
+  const token = req.cookies["access_token"];
+  console.log("former access Token", token);
+  if (!token) {
+    throw new UnauthorizedError();
+  }
+
+  try {
+    const payload = jwt.verify(token, env.jwtdet.accessSecret);
+    req.user = payload;
+    next();
+  } catch (err) {
+    throw new TokenExpiredError();
+  }
 }

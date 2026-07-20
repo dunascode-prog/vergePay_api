@@ -90,3 +90,16 @@ export class ServiceUnavailableError extends AppError {
     });
   }
 }
+export class TokenExpiredError extends AppError {
+  constructor({
+    message = "Your session has expired. Please log in again.",
+    details = null,
+  } = {}) {
+    super({
+      message,
+      statusCode: 401,
+      code: "TOKEN_EXPIRED",
+      details,
+    });
+  }
+}

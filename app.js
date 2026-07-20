@@ -5,13 +5,19 @@ import logger from "./logger.js";
 import { addRequestId } from "./utils/addRequestId.js";
 import { handleErrors } from "./controllers/handleErrors.js";
 import cors from "cors";
+import morgan from "morgan";
+import cookieParser from "cookie-parser";
 
 const app = express();
+app.use(cookieParser());
+
+app.use(morgan("dev"));
 app.use(express.json());
 app.use(
   cors({
     origin: "http://localhost:3000",
     methods: ["GET", "POST", "DELETE", "PUT"],
+    credentials: true,
     allowedHeaders: ["Content-Type", "Authorization", "Idempotency-Key"],
   }),
 );
