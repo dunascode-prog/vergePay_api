@@ -21,7 +21,7 @@ export function createRefreshToken(payload, refreshSecret, refreshExpiry) {
 
 export function verifyAccessToken(req, res, next) {
   const token = req.cookies["access_token"];
-  console.log("former access Token", token);
+
   if (!token) {
     throw new UnauthorizedError();
   }
