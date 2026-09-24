@@ -1,32 +1,38 @@
 
-CREATE TYPE kyc_status_enum AS ENUM (
-    'PENDING',
-    'IN_REVIEW',
-    'VERIFIED',
-    'REJECTED'
-);
+DO $$ BEGIN
+    CREATE TYPE kyc_status_enum AS ENUM (
+        'PENDING',
+        'IN_REVIEW',
+        'VERIFIED',
+        'REJECTED'
+    );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
+-- Signup is two-step: only username, email and password are collected at
+-- registration. Profile fields are filled in later (PATCH /v1/users/me)
+-- before KYC, so they are nullable here.
 CREATE TABLE IF NOT EXISTS users (
     user_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 
     username VARCHAR(30) UNIQUE NOT NULL,
     email VARCHAR(255) UNIQUE NOT NULL,
-    password VARCHAR(255) NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
 
-    first_name VARCHAR(80) NOT NULL,
-    last_name VARCHAR(80) NOT NULL,
+    first_name VARCHAR(80),
+    last_name VARCHAR(80),
 
-    date_of_birth DATE NOT NULL,
+    date_of_birth DATE,
 
-    present_addr VARCHAR(255) NOT NULL,
-    permanent_addr VARCHAR(255) NOT NULL,
+    present_address VARCHAR(255),
+    permanent_address VARCHAR(255),
 
-    city VARCHAR(100) NOT NULL,
-    postal_code VARCHAR(20) NOT NULL,
+    city VARCHAR(100),
+    postal_code VARCHAR(20),
 
-    country_code CHAR(2) NOT NULL,
-    default_currency_code CHAR(3) NOT NULL,
-    timezone VARCHAR(100) NOT NULL,
+    country_code CHAR(2) NOT NULL DEFAULT 'NG',
+    default_currency_code CHAR(3) NOT NULL DEFAULT 'NGN',
+    timezone VARCHAR(100) NOT NULL DEFAULT 'Africa/Lagos',
 
     two_factor_enabled BOOLEAN NOT NULL DEFAULT FALSE,
 
@@ -56,7 +62,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-
+DROP TRIGGER IF EXISTS users_updated_at ON users;
 CREATE TRIGGER users_updated_at
 BEFORE UPDATE ON users
 FOR EACH ROW

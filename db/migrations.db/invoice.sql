@@ -1,9 +1,12 @@
-CREATE TYPE invoice_status_enum AS ENUM (
-    'open',
-    'paid',
-    'overdue',
-    'cancelled'
-);
+DO $$ BEGIN
+    CREATE TYPE invoice_status_enum AS ENUM (
+        'open',
+        'paid',
+        'overdue',
+        'cancelled'
+    );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 CREATE TABLE IF NOT EXISTS invoices (
     invoice_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

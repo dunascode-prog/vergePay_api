@@ -1,9 +1,12 @@
-CREATE TYPE card_status_enum AS ENUM (
-    'active',
-    'expired',
-    'blocked',
-    'replaced'
-);
+DO $$ BEGIN
+    CREATE TYPE card_status_enum AS ENUM (
+        'active',
+        'expired',
+        'blocked',
+        'replaced'
+    );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 CREATE TABLE IF NOT EXISTS cards (
     card_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

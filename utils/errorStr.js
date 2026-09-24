@@ -51,7 +51,7 @@ export class ValidationError extends AppError {
 }
 
 export class TooManyRequestsError extends AppError {
-  constructor({ message = "Too many requests" } = {}) {
+  constructor({ message = "Too many requests", details = null } = {}) {
     super({
       message: message,
       statusCode: 429,

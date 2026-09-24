@@ -12,6 +12,8 @@ import {
   ForbiddenError,
   NotFoundError,
   UnauthorizedError,
+  DatabaseError,
+  ServiceUnavailableError,
 } from "../utils/errorStr.js";
 import { createAccessToken, createRefreshToken } from "../utils/jwt.js";
 import jwt from "jsonwebtoken";
@@ -86,7 +88,8 @@ export const signUp = async (req, res, nex) => {
       RETURNING
           user_id,
           username,
-          email `,
+          email,
+          created_at `,
       [username, email, hashedPassword],
     );
 

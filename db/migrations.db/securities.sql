@@ -1,9 +1,12 @@
-CREATE TYPE asset_type_enum AS ENUM (
-    'stock',
-    'bond',
-    'etf',
-    'mutual_fund'
-);
+DO $$ BEGIN
+    CREATE TYPE asset_type_enum AS ENUM (
+        'stock',
+        'bond',
+        'etf',
+        'mutual_fund'
+    );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 CREATE TABLE IF NOT EXISTS securities (
     security_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

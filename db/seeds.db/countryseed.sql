@@ -3,4 +3,5 @@ VALUES
 ('NG', 'Nigeria'),
 ('US', 'United States'),
 ('GB', 'United Kingdom'),
-('CA', 'Canada');
+('CA', 'Canada')
+ON CONFLICT DO NOTHING;

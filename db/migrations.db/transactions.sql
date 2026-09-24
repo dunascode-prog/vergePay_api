@@ -1,18 +1,24 @@
--- CREATE TYPE transaction_type_enum AS ENUM (
---     'transfer',
---     'card_payment',
---     'loan_disbursement',
---     'loan_repayment',
---     'fee',
---     'refund'
--- );
+DO $$ BEGIN
+    CREATE TYPE transaction_type_enum AS ENUM (
+        'transfer',
+        'card_payment',
+        'loan_disbursement',
+        'loan_repayment',
+        'fee',
+        'refund'
+    );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
--- CREATE TYPE transaction_status_enum AS ENUM (
---     'pending',
---     'settled',
---     'failed',
---     'reversed'
--- );
+DO $$ BEGIN
+    CREATE TYPE transaction_status_enum AS ENUM (
+        'pending',
+        'settled',
+        'failed',
+        'reversed'
+    );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 CREATE TABLE IF NOT EXISTS transactions (
     transaction_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

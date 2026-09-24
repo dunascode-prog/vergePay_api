@@ -3,4 +3,5 @@ VALUES
 ('Africa/Lagos'),
 ('Europe/London'),
 ('America/New_York'),
-('Asia/Tokyo');
+('Asia/Tokyo')
+ON CONFLICT DO NOTHING;

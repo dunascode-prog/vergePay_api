@@ -1,9 +1,12 @@
-CREATE TYPE audit_action_enum AS ENUM (
-    'create',
-    'update',
-    'delete',
-    'status_change'
-);
+DO $$ BEGIN
+    CREATE TYPE audit_action_enum AS ENUM (
+        'create',
+        'update',
+        'delete',
+        'status_change'
+    );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 CREATE TABLE IF NOT EXISTS audit_logs (
     audit_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

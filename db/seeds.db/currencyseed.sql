@@ -3,4 +3,5 @@ VALUES
 ('NGN', 'Nigerian Naira', '₦'),
 ('USD', 'United States Dollar', '$'),
 ('GBP', 'British Pound', '£'),
-('EUR', 'Euro', '€');
+('EUR', 'Euro', '€')
+ON CONFLICT DO NOTHING;

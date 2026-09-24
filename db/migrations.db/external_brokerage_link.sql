@@ -1,8 +1,11 @@
-CREATE TYPE external_link_status_enum AS ENUM (
-    'active',
-    'expired',
-    'revoked'
-);
+DO $$ BEGIN
+    CREATE TYPE external_link_status_enum AS ENUM (
+        'active',
+        'expired',
+        'revoked'
+    );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 CREATE TABLE IF NOT EXISTS external_brokerage_links (
     link_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

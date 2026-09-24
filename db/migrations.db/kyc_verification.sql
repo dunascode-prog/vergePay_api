@@ -1,15 +1,21 @@
-CREATE TYPE document_type_enum AS ENUM (
-    'national_id',
-    'passport',
-    'drivers_license',
-    'bvn'
-);
+DO $$ BEGIN
+    CREATE TYPE document_type_enum AS ENUM (
+        'national_id',
+        'passport',
+        'drivers_license',
+        'bvn'
+    );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE TYPE verification_status_enum AS ENUM (
-    'pending',
-    'approved',
-    'rejected'
-);
+DO $$ BEGIN
+    CREATE TYPE verification_status_enum AS ENUM (
+        'pending',
+        'approved',
+        'rejected'
+    );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 CREATE TABLE IF NOT EXISTS kyc_verification (
     kyc_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

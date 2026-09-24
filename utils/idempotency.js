@@ -1,28 +1,27 @@
 import { pool } from "../db/connectDB.js";
-import logger from "../logger.js";
+import { BadRequestError } from "./errorStr.js";
+
 export const idempotency = async (req, res, next) => {
   const key = req.header("Idempotency-Key");
 
-  try {
-    if (!key) {
-      const err = new Error("Idempotency Key Missing");
-      logger.info("missing Idempotency Key", err);
-      throw err;
-    }
-  } catch (err) {
-    next(err);
+  if (!key) {
+    throw new BadRequestError({
+      message: "Idempotency-Key header is required.",
+    });
   }
+
   const existingIdemKey = await pool.query(
     `
-        SELECT *
+        SELECT status_code, response
         FROM idempotency_keys
         WHERE key = $1
+          AND expires_at > NOW()
         `,
     [key],
   );
   if (existingIdemKey.rowCount > 0) {
     return res
-      .status(parseInt(existingIdemKey.rows[0].status_code))
+      .status(existingIdemKey.rows[0].status_code)
       .json(existingIdemKey.rows[0].response);
   }
   req.idempotencyKey = key;

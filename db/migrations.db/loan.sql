@@ -1,16 +1,22 @@
-CREATE TYPE loan_type_enum AS ENUM (
-    'personal',
-    'mortgage',
-    'cash_advance',
-    'asset_finance'
-);
+DO $$ BEGIN
+    CREATE TYPE loan_type_enum AS ENUM (
+        'personal',
+        'mortgage',
+        'cash_advance',
+        'asset_finance'
+    );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE TYPE loan_status_enum AS ENUM (
-    'pending_approval',
-    'active',
-    'repaid',
-    'defaulted'
-);
+DO $$ BEGIN
+    CREATE TYPE loan_status_enum AS ENUM (
+        'pending_approval',
+        'active',
+        'repaid',
+        'defaulted'
+    );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 CREATE TABLE IF NOT EXISTS loans (
     loan_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

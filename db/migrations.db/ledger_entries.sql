@@ -1,7 +1,10 @@
-CREATE TYPE ledger_direction_enum AS ENUM (
-    'DEBIT',
-    'CREDIT'
-);
+DO $$ BEGIN
+    CREATE TYPE ledger_direction_enum AS ENUM (
+        'DEBIT',
+        'CREDIT'
+    );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 CREATE TABLE IF NOT EXISTS ledger_entries (
     entry_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

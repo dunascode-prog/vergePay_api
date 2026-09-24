@@ -1,15 +1,21 @@
-CREATE TYPE account_type_enum AS ENUM (
-    'current',
-    'savings',
-    'investment_wallet',
-    'loan_holding'
-);
+DO $$ BEGIN
+    CREATE TYPE account_type_enum AS ENUM (
+        'current',
+        'savings',
+        'investment_wallet',
+        'loan_holding'
+    );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE TYPE account_status_enum AS ENUM (
-    'active',
-    'frozen',
-    'closed'
-);
+DO $$ BEGIN
+    CREATE TYPE account_status_enum AS ENUM (
+        'active',
+        'frozen',
+        'closed'
+    );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 CREATE TABLE IF NOT EXISTS account (
     account_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
