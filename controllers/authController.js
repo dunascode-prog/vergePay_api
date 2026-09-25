@@ -231,8 +231,10 @@ export const signIn = async (req, res, next) => {
   let user = await pool.query(
     `SELECT
     user_id,
+    username,
     email,
-    password_hash
+    password_hash,
+    kyc_status
     FROM users
     WHERE email = $1
     `,
