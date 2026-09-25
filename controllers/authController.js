@@ -99,30 +99,28 @@ export const signUp = async (req, res, nex) => {
       email: result.rows[0].email,
       created_at: result.rows[0].created_at,
     };
-    // await pool.query(
-    //   `
-    //     INSERT INTO idempotency_keys
-    //     (
-    //     key,
-    //     request_hash,
-    //     response,
-    //     status_code,
-    //     expires_at
-    //     )
-    //     VALUES
-    //     ($1,$2,$3,$4,NOW()+INTERVAL '24 HOURS')
-    //     `,
-    //   [req.idempotencyKey, requestHash, response, 201],
-    // );
 
-    // logger.info("account created", {
-    //   idempotencyKey: req.idempotencyKey,
-    //   requestId: req.requestId,
-    //   email,
-    // });
+    // Signup never creates a session: end any session already in this
+    // browser so the new user must sign in explicitly.
+    const existingRefreshToken = req.cookies["refresh_token"];
+    if (existingRefreshToken) {
+      const existingHash = crypto
+        .createHash("sha256")
+        .update(existingRefreshToken)
+        .digest("hex");
+      await pool.query(`DELETE FROM refresh_tokens WHERE token_hash = $1`, [
+        existingHash,
+      ]);
+    }
+    const cookieOptions = {
+      httpOnly: true,
+      secure: env.nodeEnv === "production",
+      sameSite: "strict",
+    };
+    res.clearCookie("access_token", cookieOptions);
+    res.clearCookie("refresh_token", cookieOptions);
 
     return res.status(201).json(response);
-    next();
   } catch (err) {
     switch (err.code) {
       case "23505":
