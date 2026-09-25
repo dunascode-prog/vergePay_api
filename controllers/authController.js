@@ -4,7 +4,6 @@ import z from "zod";
 import logger from "../logger.js";
 import crypto from "crypto";
 import AppError from "../utils/appError.js";
-import env from "../env.js";
 import {
   BadRequestError,
   ValidationError,
@@ -15,8 +14,8 @@ import {
   DatabaseError,
   ServiceUnavailableError,
 } from "../utils/errorStr.js";
-import { createAccessToken, createRefreshToken } from "../utils/jwt.js";
-import jwt from "jsonwebtoken";
+import { verifyRefreshToken } from "../utils/jwt.js";
+import { endSession, hashToken, issueSession } from "../utils/session.js";
 
 export const signUp = async (req, res, nex) => {
   if (!req.body) {
@@ -102,23 +101,7 @@ export const signUp = async (req, res, nex) => {
 
     // Signup never creates a session: end any session already in this
     // browser so the new user must sign in explicitly.
-    const existingRefreshToken = req.cookies["refresh_token"];
-    if (existingRefreshToken) {
-      const existingHash = crypto
-        .createHash("sha256")
-        .update(existingRefreshToken)
-        .digest("hex");
-      await pool.query(`DELETE FROM refresh_tokens WHERE token_hash = $1`, [
-        existingHash,
-      ]);
-    }
-    const cookieOptions = {
-      httpOnly: true,
-      secure: env.nodeEnv === "production",
-      sameSite: "strict",
-    };
-    res.clearCookie("access_token", cookieOptions);
-    res.clearCookie("refresh_token", cookieOptions);
+    await endSession(req, res);
 
     return res.status(201).json(response);
   } catch (err) {
@@ -254,46 +237,7 @@ export const signIn = async (req, res, next) => {
     });
   }
 
-  const payload = { sub: user.user_id, email: user.email };
-  const { accessSecret, refreshSecret, accessExpiry, refreshExpiry } =
-    env.jwtdet;
-  const accessToken = createAccessToken(payload, accessSecret, accessExpiry);
-  const refreshToken = createRefreshToken(
-    payload,
-    refreshSecret,
-    refreshExpiry,
-  );
-
-  const tokenHash = crypto
-    .createHash("sha256")
-    .update(refreshToken)
-    .digest("hex");
-
-  await pool.query(
-    `
-    INSERT INTO refresh_tokens (
-        user_id,
-        token_hash,
-        expires_at
-    )
-    VALUES ($1, $2, NOW() + INTERVAL '30 days')
-  `,
-    [user.user_id, tokenHash],
-  );
-
-  res.cookie("access_token", accessToken, {
-    httpOnly: true,
-    secure: env.nodeEnv === "production",
-    sameSite: "strict",
-    maxAge: 15 * 60 * 1000,
-  });
-
-  res.cookie("refresh_token", refreshToken, {
-    httpOnly: true,
-    secure: env.nodeEnv === "production",
-    sameSite: "strict",
-    maxAge: 30 * 24 * 60 * 60 * 1000,
-  });
+  await issueSession(res, user);
 
   return res.status(200).json({
     success: true,
@@ -319,119 +263,57 @@ export async function refreshToken(req, res, next) {
     throw new UnauthorizedError({ message: "Refresh token missing." });
   }
 
-  let payload;
-
   try {
-    payload = jwt.verify(refreshToken, env.jwtdet.refreshSecret);
+    verifyRefreshToken(refreshToken);
   } catch (err) {
-    console.log(err);
     throw new UnauthorizedError({
       message: "Refresh token expired or invalid.",
     });
   }
 
-  const tokenHash = crypto
-    .createHash("sha256")
-    .update(refreshToken)
-    .digest("hex");
-
-  const storedToken = await pool.query(
+  // Consume the stored token in one statement so it can only be used once,
+  // even if two refresh requests race each other.
+  const consumed = await pool.query(
     `
-    SELECT
-        refresh_token_id,
-        user_id,
-        expires_at,
-        revoked_at
-    FROM refresh_tokens
+    DELETE FROM refresh_tokens
     WHERE token_hash = $1
-    LIMIT 1;
+      AND revoked_at IS NULL
+      AND expires_at > NOW()
+    RETURNING user_id;
     `,
-    [tokenHash],
+    [hashToken(refreshToken)],
   );
 
-  if (storedToken.rowCount === 0) {
-    throw new ForbiddenError({ message: "Refresh token has been revoked." });
+  if (consumed.rowCount === 0) {
+    throw new UnauthorizedError({
+      message: "Refresh token has been revoked or has expired.",
+    });
   }
+
   const user = await pool.query(
-    `SELECT
-    user_id,
-    email
-FROM users
-WHERE user_id = $1;
-  `,
-    [storedToken.rows[0].user_id],
+    `SELECT user_id, email FROM users WHERE user_id = $1;`,
+    [consumed.rows[0].user_id],
   );
 
   if (user.rowCount === 0) {
     throw new UnauthorizedError({ message: "User not found." });
   }
 
-  const pay_l = user.rows[0];
-
-  const newAccessToken = createAccessToken(
-    {
-      sub: pay_l.user_id,
-      email: pay_l.email,
-    },
-    env.jwtdet.accessSecret,
-    env.jwtdet.accessExpiry,
-  );
-
-  const newRefreshToken = createRefreshToken(
-    {
-      sub: pay_l.user_id,
-      email: pay_l.email,
-    },
-    env.jwtdet.refreshSecret,
-    env.jwtdet.refreshExpiry,
-  );
-
-  await pool.query(
-    `
-  DELETE FROM refresh_tokens
-  WHERE token_hash = $1;
-  `,
-    [tokenHash],
-  );
-
-  const newRefreshHash = crypto
-    .createHash("sha256")
-    .update(newRefreshToken)
-    .digest("hex");
-
-  const result = await pool.query(
-    `
-  INSERT INTO refresh_tokens (
-      user_id,
-      token_hash,
-      expires_at
-  )
-  VALUES (
-      $1,
-      $2,
-      NOW() + INTERVAL '30 days'
-  )
-  RETURNING *;
-  `,
-    [pay_l.user_id, newRefreshHash],
-  );
-
-  res.cookie("access_token", newAccessToken, {
-    httpOnly: true,
-    secure: env.nodeEnv === "production",
-    sameSite: "strict",
-    maxAge: 15 * 60 * 1000,
-  });
-
-  res.cookie("refresh_token", newRefreshToken, {
-    httpOnly: true,
-    secure: env.nodeEnv === "production",
-    sameSite: "strict",
-    maxAge: 30 * 24 * 60 * 60 * 1000,
-  });
+  await issueSession(res, user.rows[0]);
 
   res.status(200).json({
     success: true,
     message: "Access token refreshed successfully.",
+  });
+}
+
+export async function logout(req, res, next) {
+  // Works even when the access token has expired, so a user can always sign
+  // out; calling it with no session is a harmless no-op.
+  await endSession(req, res);
+
+  return res.status(200).json({
+    success: true,
+    message: "Logged out.",
   });
 }
