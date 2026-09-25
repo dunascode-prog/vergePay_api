@@ -1,10 +1,10 @@
 
 DO $$ BEGIN
     CREATE TYPE kyc_status_enum AS ENUM (
-        'PENDING',
-        'IN_REVIEW',
-        'VERIFIED',
-        'REJECTED'
+        'unverified',
+        'pending',
+        'verified',
+        'rejected'
     );
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS users (
 
     two_factor_enabled BOOLEAN NOT NULL DEFAULT FALSE,
 
-    kyc_status kyc_status_enum NOT NULL DEFAULT 'PENDING',
+    kyc_status kyc_status_enum NOT NULL DEFAULT 'unverified',
 
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,

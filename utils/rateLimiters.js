@@ -22,14 +22,16 @@ export const signupLimiter = rateLimit({
   },
 });
 export const signinLimiter = rateLimit({
-  windowMs: maxFailedLoginAttemptsSignIn * 60 * 1000,
-  max: lockoutDurationMinutesSignIn,
+  windowMs: lockoutDurationMinutesSignIn * 60 * 1000,
+  max: maxFailedLoginAttemptsSignIn,
+  // only failed logins count toward the lockout
+  skipSuccessfulRequests: true,
   standardHeaders: true,
   legacyHeaders: false,
   handler: (req, res, next) => {
     next(
       new TooManyRequestsError({
-        message: "Too many registration attempts. Please try again later.",
+        message: "Too many sign-in attempts. Please try again later.",
       }),
     );
   },
