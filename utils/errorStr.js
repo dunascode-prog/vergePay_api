@@ -50,6 +50,20 @@ export class ValidationError extends AppError {
   }
 }
 
+export class KycRequiredError extends AppError {
+  constructor({
+    message = "Identity verification is required before you can move money.",
+  } = {}) {
+    super({ message, statusCode: 403, code: "KYC_REQUIRED" });
+  }
+}
+
+export class InsufficientFundsError extends AppError {
+  constructor({ message = "Insufficient funds.", details = null } = {}) {
+    super({ message, statusCode: 422, code: "INSUFFICIENT_FUNDS", details });
+  }
+}
+
 export class TooManyRequestsError extends AppError {
   constructor({ message = "Too many requests", details = null } = {}) {
     super({

@@ -8,6 +8,10 @@ import {
   unfreezeAccount,
   updateAccount,
 } from "../controllers/accountController.js";
+import {
+  getBalanceHistory,
+  listAccountTransactions,
+} from "../controllers/transactionController.js";
 import { idempotency } from "../utils/idempotency.js";
 import { verifyAccessToken } from "../utils/jwt.js";
 
@@ -19,6 +23,8 @@ accountRouter.get("/", listAccounts);
 accountRouter.post("/", idempotency, openAccount);
 accountRouter.get("/:accountId", getAccount);
 accountRouter.patch("/:accountId", updateAccount);
+accountRouter.get("/:accountId/transactions", listAccountTransactions);
+accountRouter.get("/:accountId/balance-history", getBalanceHistory);
 
 // State changes are explicit actions rather than a PATCH of account_status,
 // so only legal transitions are possible (API doc 4.5).

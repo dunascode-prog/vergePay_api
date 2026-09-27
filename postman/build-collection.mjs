@@ -168,6 +168,123 @@ const accounts = [
   req("Unfreeze closed account (expect 409)", "POST", "/accounts/{{accountId}}/unfreeze", { tests: [status(409)] }),
 ];
 
+// Transfers: opens a fresh sender and receiver (both owned by the signed-in
+// user, so the same user can also reverse), funds the sender through the
+// dev top-up, then exercises transfer, replay, history and reversal.
+const transferBody = {
+  sender_account_id: "{{senderAccountId}}",
+  receiver_account_number: "{{receiverAccountNumber}}",
+  amount_minor: 30000,
+  currency_code: "NGN",
+  description: "August rent contribution",
+};
+
+const transactions = [
+  req("Dev: mark me KYC-verified", "POST", "/dev/kyc/verify", {
+    description: "Development only. Transfers require kyc_status = verified; this sets it for the signed-in user until real KYC exists.",
+    tests: [status(200), 'pm.test("verified", () => pm.expect(pm.response.json().kyc_status).to.eql("verified"));'],
+  }),
+  req("Open sender account", "POST", "/accounts", {
+    pre: newKey,
+    headers: [idem()],
+    body: { account_type: "current", currency_code: "NGN" },
+    tests: [status(201), 'pm.collectionVariables.set("senderAccountId", pm.response.json().account_id);'],
+  }),
+  req("Open receiver account", "POST", "/accounts", {
+    pre: newKey,
+    headers: [idem()],
+    body: { account_type: "savings", currency_code: "NGN" },
+    tests: [
+      status(201),
+      "const a = pm.response.json();",
+      'pm.collectionVariables.set("receiverAccountId", a.account_id);',
+      'pm.collectionVariables.set("receiverAccountNumber", a.account_number);',
+    ],
+  }),
+  req("Dev: fund sender with 100000", "POST", "/dev/accounts/{{senderAccountId}}/fund", {
+    pre: newKey,
+    headers: [idem()],
+    body: { amount_minor: 100000 },
+    description: "Development only. Posts a real ledger transaction from the platform funding account.",
+    tests: [status(201), 'pm.test("settled", () => pm.expect(pm.response.json().status).to.eql("settled"));'],
+  }),
+  req("Transfer 30000 by account number", "POST", "/transactions", {
+    pre: newKey,
+    headers: [idem()],
+    body: transferBody,
+    tests: [
+      status(201, "transfer created"),
+      "const t = pm.response.json();",
+      'pm.collectionVariables.set("transactionId", t.transaction_id);',
+      'pm.test("settled immediately", () => pm.expect(t.status).to.eql("settled"));',
+      'pm.test("amount is in minor units", () => pm.expect(t.amount_minor).to.eql(30000));',
+    ],
+  }),
+  req("Transfer - replay same key (no double charge)", "POST", "/transactions", {
+    headers: [idem()],
+    body: transferBody,
+    tests: [
+      status(201),
+      'pm.test("same transaction returned", () => pm.expect(pm.response.json().transaction_id).to.eql(pm.collectionVariables.get("transactionId")));',
+    ],
+  }),
+  req("Transfer - insufficient funds (expect 422)", "POST", "/transactions", {
+    pre: newKey,
+    headers: [idem()],
+    body: { ...transferBody, amount_minor: 100000000 },
+    tests: [status(422), 'pm.test("insufficient funds", () => pm.expect(pm.response.json().error.code).to.eql("INSUFFICIENT_FUNDS"));'],
+  }),
+  req("Transfer - unknown account number (expect 422)", "POST", "/transactions", {
+    pre: newKey,
+    headers: [idem()],
+    body: { ...transferBody, receiver_account_number: "0000000000" },
+    tests: [status(422)],
+  }),
+  req("Get sender account (balance 70000)", "GET", "/accounts/{{senderAccountId}}", {
+    tests: [status(200), 'pm.test("balance reflects the transfer", () => pm.expect(pm.response.json().balance_minor).to.eql(70000));'],
+  }),
+  req("Get transaction with ledger entries", "GET", "/transactions/{{transactionId}}", {
+    tests: [
+      status(200),
+      "const e = pm.response.json().ledger_entries;",
+      'pm.test("one debit and one credit", () => pm.expect(e.map((x) => x.direction)).to.eql(["DEBIT", "CREDIT"]));',
+      'pm.test("they balance", () => pm.expect(e[0].amount_minor).to.eql(e[1].amount_minor));',
+    ],
+  }),
+  req("Sender history", "GET", "/accounts/{{senderAccountId}}/transactions?limit=20", {
+    tests: [
+      status(200),
+      "const page = pm.response.json();",
+      'pm.test("latest entry is the debit", () => pm.expect(page.data[0].direction).to.eql("debit"));',
+      'pm.test("has pagination fields", () => { pm.expect(page).to.have.property("next_cursor"); pm.expect(page).to.have.property("has_more"); });',
+    ],
+  }),
+  req("Sender history - page size 1 (cursor)", "GET", "/accounts/{{senderAccountId}}/transactions?limit=1", {
+    tests: [
+      status(200),
+      'pm.test("more pages available", () => pm.expect(pm.response.json().has_more).to.be.true);',
+      'pm.collectionVariables.set("nextCursor", pm.response.json().next_cursor);',
+    ],
+  }),
+  req("Sender history - next page", "GET", "/accounts/{{senderAccountId}}/transactions?limit=1&after={{nextCursor}}", {
+    tests: [status(200), 'pm.test("second row is the top-up credit", () => pm.expect(pm.response.json().data[0].direction).to.eql("credit"));'],
+  }),
+  req("Sender balance history", "GET", "/accounts/{{senderAccountId}}/balance-history?interval=day", {
+    tests: [status(200), 'pm.test("ends at the current balance", () => pm.expect(pm.response.json().data.slice(-1)[0].closing_balance_minor).to.eql(70000));'],
+  }),
+  req("Reverse transfer (as receiver)", "POST", "/transactions/{{transactionId}}/reverse", {
+    pre: newKey,
+    headers: [idem()],
+    description: "Only the receiving side can reverse. Both accounts belong to this user here, so it's allowed.",
+    tests: [status(201), 'pm.test("links to original", () => pm.expect(pm.response.json().original_transaction_id).to.eql(pm.collectionVariables.get("transactionId")));'],
+  }),
+  req("Reverse again (expect 409)", "POST", "/transactions/{{transactionId}}/reverse", {
+    pre: newKey,
+    headers: [idem()],
+    tests: [status(409)],
+  }),
+];
+
 const logout = [
   req("Logout", "POST", "/auth/logout", { tests: [status(200)] }),
   req("Profile after logout (expect 401)", "GET", "/users/me", { tests: [status(401)] }),
@@ -178,7 +295,7 @@ const collection = {
   info: {
     name: "VergePay API",
     description:
-      "Auth, profile and account endpoints for vergepay_api. Run the folders top to bottom (or use the Collection Runner). Postman's cookie jar keeps the session cookies, so always call http://localhost, not 127.0.0.1.",
+      "Auth, profile, account and transaction endpoints for vergepay_api. Run the folders top to bottom (or use the Collection Runner). Postman's cookie jar keeps the session cookies, so always call http://localhost, not 127.0.0.1.",
     schema: "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
   },
   variable: [
@@ -189,12 +306,18 @@ const collection = {
     { key: "idempotencyKey", value: "" },
     { key: "accountId", value: "" },
     { key: "oldRefreshToken", value: "" },
+    { key: "senderAccountId", value: "" },
+    { key: "receiverAccountId", value: "" },
+    { key: "receiverAccountNumber", value: "" },
+    { key: "transactionId", value: "" },
+    { key: "nextCursor", value: "" },
   ],
   item: [
     { name: "1. Auth", item: auth },
     { name: "2. Profile", item: profile },
     { name: "3. Accounts", item: accounts },
-    { name: "4. Logout", item: logout },
+    { name: "4. Transactions", item: transactions },
+    { name: "5. Logout", item: logout },
   ],
 };
 

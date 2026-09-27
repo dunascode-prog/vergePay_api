@@ -36,3 +36,21 @@ export const signinLimiter = rateLimit({
     );
   },
 });
+
+// Money-moving endpoints: per signed-in user, not per IP (API doc 14.2). The
+// limit is generous; it exists to contain a runaway client retry loop.
+// Must run after verifyAccessToken so req.user is set.
+export const moneyLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  keyGenerator: (req) => req.user.sub,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req, res, next) => {
+    next(
+      new TooManyRequestsError({
+        message: "Too many money-movement requests. Please slow down.",
+      }),
+    );
+  },
+});
