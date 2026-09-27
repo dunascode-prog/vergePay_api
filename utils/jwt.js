@@ -35,7 +35,12 @@ export function verifyAccessToken(req, res, next) {
   try {
     payload = jwt.verify(token, env.jwtdet.accessSecret, jwtOptions);
   } catch (err) {
-    throw new TokenExpiredError();
+    // Only a genuinely expired token is worth refreshing; a forged,
+    // tampered or wrongly-issued token is simply unauthorized.
+    if (err instanceof jwt.TokenExpiredError) {
+      throw new TokenExpiredError();
+    }
+    throw new UnauthorizedError({ message: "Invalid access token." });
   }
   // next() stays outside the try so errors thrown by later handlers are not
   // mistaken for an expired token
