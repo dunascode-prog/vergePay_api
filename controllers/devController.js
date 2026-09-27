@@ -4,7 +4,7 @@
 // the KYC check that transfers require.
 import z from "zod";
 import { pool } from "../db/connectDB.js";
-import { postOnce, postTransaction } from "../services/ledger.js";
+import { postOnce, postTransaction, publicTransaction } from "../services/ledger.js";
 import { BadRequestError, NotFoundError, ValidationError } from "../utils/errorStr.js";
 import { isUuid, validationDetails } from "../utils/validation.js";
 
@@ -71,6 +71,5 @@ export async function fundOwnAccount(req, res) {
   }, isSameTopUp);
 
   if (replayed) res.set("Idempotent-Replayed", "true");
-  const { ledger_entries, reverses_transaction_id, loan_id, ...response } = transaction;
-  return res.status(201).json(response);
+  return res.status(201).json(publicTransaction(transaction));
 }

@@ -224,6 +224,26 @@ function changeStatus(action) {
             message: "Can't close an account with open invoices. Cancel them first.",
           });
         }
+        // A card payment still waiting on the processor must land somewhere,
+        // and a linked card would keep funding a closed account.
+        const cardUse = await client.query(
+          `SELECT
+             EXISTS (SELECT 1 FROM transactions
+                     WHERE receiver_account_id = $1 AND status = 'pending') AS pending_payment,
+             EXISTS (SELECT 1 FROM cards
+                     WHERE account_id = $1 AND card_status <> 'removed') AS has_cards`,
+          [before.account_id],
+        );
+        if (cardUse.rows[0].pending_payment) {
+          throw new ConflictError({
+            message: "Can't close an account while a card payment into it is still pending.",
+          });
+        }
+        if (cardUse.rows[0].has_cards) {
+          throw new ConflictError({
+            message: "Can't close an account with linked cards. Remove them first.",
+          });
+        }
       }
 
       const result = await client.query(

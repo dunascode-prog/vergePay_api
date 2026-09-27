@@ -12,7 +12,15 @@ const app = express();
 app.use(cookieParser());
 
 app.use(morgan("dev"));
-app.use(express.json());
+// Webhook signatures are computed over the exact bytes received, so keep
+// them for those routes (controllers/webhookController.js).
+app.use(
+  express.json({
+    verify: (req, res, buf) => {
+      if (req.originalUrl.startsWith("/v1/webhooks/")) req.rawBody = buf;
+    },
+  }),
+);
 app.use(
   cors({
     origin: "http://localhost:3000",

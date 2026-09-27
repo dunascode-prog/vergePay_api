@@ -1,6 +1,6 @@
 import z from "zod";
 import { pool } from "../db/connectDB.js";
-import { postOnce, postTransaction } from "../services/ledger.js";
+import { postOnce, postTransaction, publicTransaction } from "../services/ledger.js";
 import {
   BadRequestError,
   ConflictError,
@@ -66,11 +66,6 @@ async function findOwnAccount(db, userId, accountId, { lock = false } = {}) {
   return result.rows[0];
 }
 
-function transferResponse(txn) {
-  const { ledger_entries, reverses_transaction_id, loan_id, ...rest } = txn;
-  return rest;
-}
-
 // POST /v1/transactions
 export async function createTransfer(req, res) {
   const body = parseBody(transferSchema, req.body);
@@ -129,7 +124,7 @@ export async function createTransfer(req, res) {
   }, isSameTransfer);
 
   if (replayed) res.set("Idempotent-Replayed", "true");
-  return res.status(201).json(transferResponse(transaction));
+  return res.status(201).json(publicTransaction(transaction));
 }
 
 // GET /v1/transactions/:transactionId  (caller must own the sender or receiver)

@@ -513,6 +513,31 @@ const invoices = [
   }),
 ];
 
+// Cards: linking and most card actions need a recent 2FA code and a
+// Flutterwave checkout, so they're covered by the end-to-end tests. These
+// check the guards that don't.
+const cards = [
+  req("List my cards", "GET", "/cards", {
+    tests: [status(200), 'pm.test("returns a data array", () => pm.expect(pm.response.json().data).to.be.an("array"));'],
+  }),
+  req("Add card without a recent 2FA code (expect 403)", "POST", "/cards", {
+    pre: newKey,
+    headers: [idem()],
+    body: { account_id: "{{senderAccountId}}" },
+    tests: [status(403), 'pm.test("asks for 2FA", () => pm.expect(pm.response.json().error.code).to.eql("TWO_FACTOR_REQUIRED"));'],
+  }),
+  req("Unknown card (expect 404)", "GET", "/cards/00000000-0000-4000-8000-000000000000", {
+    tests: [status(404)],
+  }),
+  req("Webhook without a signature (expect 401)", "POST", "/webhooks/payment-processor", {
+    body: { event: "charge.completed", data: { id: 1, tx_ref: "x" } },
+    tests: [status(401)],
+  }),
+  req("No bank-transfer number yet (expect 404)", "GET", "/accounts/{{senderAccountId}}/virtual-account", {
+    tests: [status(404)],
+  }),
+];
+
 const logout = [
   req("Logout", "POST", "/auth/logout", { tests: [status(200)] }),
   req("Profile after logout (expect 401)", "GET", "/users/me", { tests: [status(401)] }),
@@ -523,7 +548,7 @@ const collection = {
   info: {
     name: "VergePay API",
     description:
-      "Auth, profile, account, transaction, loan and invoice endpoints for vergepay_api. Run the folders top to bottom (or use the Collection Runner). Postman's cookie jar keeps the session cookies, so always call http://localhost, not 127.0.0.1.",
+      "Auth, profile, account, transaction, loan, invoice and card endpoints for vergepay_api. Run the folders top to bottom (or use the Collection Runner). Postman's cookie jar keeps the session cookies, so always call http://localhost, not 127.0.0.1.",
     schema: "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
   },
   variable: [
@@ -555,7 +580,8 @@ const collection = {
     { name: "4. Transactions", item: transactions },
     { name: "5. Loans", item: loans },
     { name: "6. Invoices", item: invoices },
-    { name: "7. Logout", item: logout },
+    { name: "7. Cards", item: cards },
+    { name: "8. Logout", item: logout },
   ],
 };
 
