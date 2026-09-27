@@ -71,6 +71,6 @@ export async function fundOwnAccount(req, res) {
   }, isSameTopUp);
 
   if (replayed) res.set("Idempotent-Replayed", "true");
-  const { ledger_entries, reverses_transaction_id, ...response } = transaction;
+  const { ledger_entries, reverses_transaction_id, loan_id, ...response } = transaction;
   return res.status(201).json(response);
 }

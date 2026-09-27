@@ -4,9 +4,10 @@ import { ConflictError, InsufficientFundsError, ValidationError } from "../utils
 import { IdempotencyConflictError } from "../utils/idempotency.js";
 
 // The ledger-posting routine (data model 7.1). Every movement of money, be it
-// a transfer, a top-up or a reversal, goes through postTransaction, and it
-// must run inside the caller's DB transaction (pass the client from
-// withTransaction) so that everything below commits or rolls back together:
+// a transfer, a top-up, a reversal or a loan payment, goes through
+// postTransaction, and it must run inside the caller's DB transaction (pass
+// the client from withTransaction) so that everything below commits or rolls
+// back together:
 //
 //   1. lock both accounts, always in account_id order, so two opposite
 //      transfers (A->B and B->A) can't deadlock
@@ -29,6 +30,7 @@ const TRANSACTION_COLUMNS = `
     status,
     description,
     reverses_transaction_id,
+    loan_id,
     created_at,
     settled_at`;
 
@@ -43,6 +45,7 @@ export async function postTransaction(
     description = null,
     idempotencyKey,
     reversesTransactionId = null,
+    loanId = null,
   },
 ) {
   const locked = await client.query(
@@ -100,9 +103,10 @@ export async function postTransaction(
         currency_code,
         status,
         description,
-        reverses_transaction_id
+        reverses_transaction_id,
+        loan_id
      )
-     VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, $8)
+     VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, $8, $9)
      RETURNING transaction_id`,
     [
       idempotencyKey,
@@ -113,6 +117,7 @@ export async function postTransaction(
       currencyCode,
       description,
       reversesTransactionId,
+      loanId,
     ],
   );
   const transactionId = inserted.rows[0].transaction_id;

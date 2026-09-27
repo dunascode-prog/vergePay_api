@@ -22,7 +22,9 @@ function req(name, method, path, opts = {}) {
     header: [...(body ? [json] : []), ...headers],
     url: { raw: `{{baseUrl}}${path}`, host: ["{{baseUrl}}"], path: path.split("/").filter(Boolean) },
   };
-  if (body) request.body = { mode: "raw", raw: JSON.stringify(body, null, 2), options: { raw: { language: "json" } } };
+  // variables named *Amount hold numbers, so they go into the JSON unquoted
+  const raw = body && JSON.stringify(body, null, 2).replace(/"(\{\{\w+Amount\}\})"/g, "$1");
+  if (body) request.body = { mode: "raw", raw, options: { raw: { language: "json" } } };
   if (description) request.description = description;
   return { name, event, request };
 }
@@ -285,6 +287,134 @@ const transactions = [
   }),
 ];
 
+// Loans: apply, then the back office approves and disburses (these send the
+// X-Internal-Api-Key header; set internalApiKey to INTERNAL_API_KEY from
+// .env), then the borrower repays the first installment.
+const internal = { key: "X-Internal-Api-Key", value: "{{internalApiKey}}" };
+const loanApplication = {
+  account_id: "{{loanAccountId}}",
+  loan_type: "personal",
+  requested_amount_minor: 1500000,
+  currency_code: "NGN",
+  term_months: 3,
+  purpose: "Laptop for freelance work",
+};
+
+const loans = [
+  req("Open loan account", "POST", "/accounts", {
+    pre: newKey,
+    headers: [idem()],
+    body: { account_type: "current", currency_code: "NGN" },
+    tests: [status(201), 'pm.collectionVariables.set("loanAccountId", pm.response.json().account_id);'],
+  }),
+  req("Apply for a loan", "POST", "/loans/applications", {
+    pre: newKey,
+    headers: [idem()],
+    body: loanApplication,
+    description: "Needs KYC verified (done in '4. Transactions'). The Idempotency-Key is optional here.",
+    tests: [
+      status(202, "accepted for review"),
+      "const a = pm.response.json();",
+      'pm.collectionVariables.set("applicationId", a.application_id);',
+      'pm.test("pending review", () => pm.expect(a.status).to.eql("pending_review"));',
+    ],
+  }),
+  req("Apply again while one is pending (expect 409)", "POST", "/loans/applications", {
+    body: loanApplication,
+    tests: [status(409)],
+  }),
+  req("Get application status", "GET", "/loans/applications/{{applicationId}}", {
+    tests: [status(200), 'pm.test("no loan yet", () => pm.expect(pm.response.json().loan_id).to.eql(null));'],
+  }),
+  req("Admin: underwriting queue", "GET", "/admin/loans/applications?status=pending_review", {
+    headers: [internal],
+    tests: [
+      status(200),
+      "const a = pm.response.json().data.find((x) => x.application_id === pm.collectionVariables.get(\"applicationId\"));",
+      'pm.test("lists the application with applicant data", () => pm.expect(a.applicant.kyc_status).to.eql("verified"));',
+    ],
+  }),
+  req("Admin: queue without key (expect 401)", "GET", "/admin/loans/applications", {
+    tests: [status(401)],
+  }),
+  req("Admin: approve at 18%", "POST", "/loans/applications/{{applicationId}}/approve", {
+    headers: [internal],
+    body: { interest_rate_bps: 1800 },
+    tests: [
+      status(201, "loan created"),
+      "const l = pm.response.json();",
+      'pm.collectionVariables.set("loanId", l.loan_id);',
+      'pm.test("approved, not yet paid out", () => pm.expect(l.loan_status).to.eql("approved"));',
+    ],
+  }),
+  req("Get loan (approved, owes 0)", "GET", "/loans/{{loanId}}", {
+    tests: [status(200), 'pm.test("nothing owed before disbursement", () => pm.expect(pm.response.json().balance_remaining_minor).to.eql(0));'],
+  }),
+  req("Admin: disburse", "POST", "/loans/{{loanId}}/disburse", {
+    pre: newKey,
+    headers: [internal, idem()],
+    tests: [
+      status(201, "paid out"),
+      "const t = pm.response.json();",
+      'pm.collectionVariables.set("disbursementId", t.transaction_id);',
+      'pm.test("full principal settled", () => { pm.expect(t.status).to.eql("settled"); pm.expect(t.amount_minor).to.eql(1500000); });',
+    ],
+  }),
+  req("Admin: disburse - replay same key", "POST", "/loans/{{loanId}}/disburse", {
+    headers: [internal, idem()],
+    tests: [status(201), 'pm.test("same transaction", () => pm.expect(pm.response.json().transaction_id).to.eql(pm.collectionVariables.get("disbursementId")));'],
+  }),
+  req("Admin: disburse again, new key (expect 409)", "POST", "/loans/{{loanId}}/disburse", {
+    pre: newKey,
+    headers: [internal, idem()],
+    tests: [status(409)],
+  }),
+  req("Get repayment schedule", "GET", "/loans/{{loanId}}/schedule", {
+    tests: [
+      status(200),
+      "const s = pm.response.json().data;",
+      'pm.test("3 unpaid installments", () => { pm.expect(s).to.have.length(3); pm.expect(s.every((x) => !x.paid_flag)).to.be.true; });',
+      'pm.test("principal portions add up", () => pm.expect(s.reduce((n, x) => n + x.principal_minor, 0)).to.eql(1500000));',
+      'pm.collectionVariables.set("installmentAmount", s[0].installment_amount_minor);',
+    ],
+  }),
+  req("Repay - wrong amount (expect 422)", "POST", "/loans/{{loanId}}/repayments", {
+    pre: newKey,
+    headers: [idem()],
+    body: { source_account_id: "{{loanAccountId}}", amount_minor: 100 },
+    tests: [status(422)],
+  }),
+  req("Repay installment 1", "POST", "/loans/{{loanId}}/repayments", {
+    pre: newKey,
+    headers: [idem()],
+    body: { source_account_id: "{{loanAccountId}}", amount_minor: "{{installmentAmount}}" },
+    tests: [
+      status(201, "repaid"),
+      'pm.test("installment 1 marked paid", () => pm.expect(pm.response.json().schedule_installment_marked_paid).to.eql(1));',
+    ],
+  }),
+  req("Get loan (1 of 3 paid)", "GET", "/loans/{{loanId}}", {
+    tests: [
+      status(200),
+      "const l = pm.response.json();",
+      'pm.test("active with 1 installment paid", () => { pm.expect(l.loan_status).to.eql("active"); pm.expect(l.installments_paid).to.eql(1); });',
+      'pm.test("next is installment 2", () => pm.expect(l.next_installment.installment_number).to.eql(2));',
+    ],
+  }),
+  req("List my loans", "GET", "/loans", {
+    tests: [status(200), 'pm.test("includes the loan", () => pm.expect(pm.response.json().data.map((l) => l.loan_id)).to.include(pm.collectionVariables.get("loanId")));'],
+  }),
+  req("Apply for a second loan", "POST", "/loans/applications", {
+    body: loanApplication,
+    tests: [status(202), 'pm.collectionVariables.set("applicationId", pm.response.json().application_id);'],
+  }),
+  req("Admin: reject", "POST", "/loans/applications/{{applicationId}}/reject", {
+    headers: [internal],
+    body: { reason: "Existing loan still in progress" },
+    tests: [status(200), 'pm.test("rejected", () => pm.expect(pm.response.json().status).to.eql("rejected"));'],
+  }),
+];
+
 const logout = [
   req("Logout", "POST", "/auth/logout", { tests: [status(200)] }),
   req("Profile after logout (expect 401)", "GET", "/users/me", { tests: [status(401)] }),
@@ -295,7 +425,7 @@ const collection = {
   info: {
     name: "VergePay API",
     description:
-      "Auth, profile, account and transaction endpoints for vergepay_api. Run the folders top to bottom (or use the Collection Runner). Postman's cookie jar keeps the session cookies, so always call http://localhost, not 127.0.0.1.",
+      "Auth, profile, account, transaction and loan endpoints for vergepay_api. Run the folders top to bottom (or use the Collection Runner). Postman's cookie jar keeps the session cookies, so always call http://localhost, not 127.0.0.1.",
     schema: "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
   },
   variable: [
@@ -311,13 +441,20 @@ const collection = {
     { key: "receiverAccountNumber", value: "" },
     { key: "transactionId", value: "" },
     { key: "nextCursor", value: "" },
+    { key: "internalApiKey", value: "", description: "INTERNAL_API_KEY from .env. Needed by the Admin requests in 5. Loans." },
+    { key: "loanAccountId", value: "" },
+    { key: "applicationId", value: "" },
+    { key: "loanId", value: "" },
+    { key: "disbursementId", value: "" },
+    { key: "installmentAmount", value: "" },
   ],
   item: [
     { name: "1. Auth", item: auth },
     { name: "2. Profile", item: profile },
     { name: "3. Accounts", item: accounts },
     { name: "4. Transactions", item: transactions },
-    { name: "5. Logout", item: logout },
+    { name: "5. Loans", item: loans },
+    { name: "6. Logout", item: logout },
   ],
 };
 

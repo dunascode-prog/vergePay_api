@@ -45,7 +45,8 @@ function hashRequest(req) {
 //   repeated key, different payload-> 422
 //   repeated key, still in flight  -> 409
 //   missing key                    -> 400
-// Keys are scoped to the caller, so two users can't collide on a key.
+// Keys are scoped to the caller, so two users can't collide on a key; a
+// back-office caller (utils/internalAuth.js) has its own "internal" scope.
 // Only 2xx responses are stored; any other outcome releases the key so the
 // client can retry.
 export const idempotency = async (req, res, next) => {
@@ -62,7 +63,8 @@ export const idempotency = async (req, res, next) => {
     });
   }
 
-  const key = `${req.user?.sub ?? "anonymous"}:${clientKey}`;
+  const scope = req.user?.sub ?? (req.internalCaller ? "internal" : "anonymous");
+  const key = `${scope}:${clientKey}`;
   const requestHash = hashRequest(req);
 
   // Clear this key if it has expired or its original request died mid-flight,
@@ -135,3 +137,9 @@ export const idempotency = async (req, res, next) => {
   req.idempotencyKey = clientKey;
   next();
 };
+
+// For endpoints where the doc makes the key recommended rather than
+// required: with a key, the rules above apply; without one, the request
+// runs unprotected.
+export const optionalIdempotency = (req, res, next) =>
+  req.header("Idempotency-Key") ? idempotency(req, res, next) : next();

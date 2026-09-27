@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "VergePay API",
-    "description": "Auth, profile, account and transaction endpoints for vergepay_api. Run the folders top to bottom (or use the Collection Runner). Postman's cookie jar keeps the session cookies, so always call http://localhost, not 127.0.0.1.",
+    "description": "Auth, profile, account, transaction and loan endpoints for vergepay_api. Run the folders top to bottom (or use the Collection Runner). Postman's cookie jar keeps the session cookies, so always call http://localhost, not 127.0.0.1.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -51,6 +51,31 @@
     },
     {
       "key": "nextCursor",
+      "value": ""
+    },
+    {
+      "key": "internalApiKey",
+      "value": "",
+      "description": "INTERNAL_API_KEY from .env. Needed by the Admin requests in 5. Loans."
+    },
+    {
+      "key": "loanAccountId",
+      "value": ""
+    },
+    {
+      "key": "applicationId",
+      "value": ""
+    },
+    {
+      "key": "loanId",
+      "value": ""
+    },
+    {
+      "key": "disbursementId",
+      "value": ""
+    },
+    {
+      "key": "installmentAmount",
       "value": ""
     }
   ],
@@ -1677,7 +1702,776 @@
       ]
     },
     {
-      "name": "5. Logout",
+      "name": "5. Loans",
+      "item": [
+        {
+          "name": "Open loan account",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"idempotencyKey\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set(\"loanAccountId\", pm.response.json().account_id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/accounts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "accounts"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"account_type\": \"current\",\n  \"currency_code\": \"NGN\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Apply for a loan",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"idempotencyKey\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"accepted for review\", () => pm.response.to.have.status(202));",
+                  "const a = pm.response.json();",
+                  "pm.collectionVariables.set(\"applicationId\", a.application_id);",
+                  "pm.test(\"pending review\", () => pm.expect(a.status).to.eql(\"pending_review\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/loans/applications",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "loans",
+                "applications"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"account_id\": \"{{loanAccountId}}\",\n  \"loan_type\": \"personal\",\n  \"requested_amount_minor\": 1500000,\n  \"currency_code\": \"NGN\",\n  \"term_months\": 3,\n  \"purpose\": \"Laptop for freelance work\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Needs KYC verified (done in '4. Transactions'). The Idempotency-Key is optional here."
+          }
+        },
+        {
+          "name": "Apply again while one is pending (expect 409)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 409\", () => pm.response.to.have.status(409));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/loans/applications",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "loans",
+                "applications"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"account_id\": \"{{loanAccountId}}\",\n  \"loan_type\": \"personal\",\n  \"requested_amount_minor\": 1500000,\n  \"currency_code\": \"NGN\",\n  \"term_months\": 3,\n  \"purpose\": \"Laptop for freelance work\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Get application status",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"no loan yet\", () => pm.expect(pm.response.json().loan_id).to.eql(null));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/loans/applications/{{applicationId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "loans",
+                "applications",
+                "{{applicationId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Admin: underwriting queue",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const a = pm.response.json().data.find((x) => x.application_id === pm.collectionVariables.get(\"applicationId\"));",
+                  "pm.test(\"lists the application with applicant data\", () => pm.expect(a.applicant.kyc_status).to.eql(\"verified\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Internal-Api-Key",
+                "value": "{{internalApiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/loans/applications?status=pending_review",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "loans",
+                "applications?status=pending_review"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Admin: queue without key (expect 401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 401\", () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/admin/loans/applications",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "loans",
+                "applications"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Admin: approve at 18%",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"loan created\", () => pm.response.to.have.status(201));",
+                  "const l = pm.response.json();",
+                  "pm.collectionVariables.set(\"loanId\", l.loan_id);",
+                  "pm.test(\"approved, not yet paid out\", () => pm.expect(l.loan_status).to.eql(\"approved\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Internal-Api-Key",
+                "value": "{{internalApiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/loans/applications/{{applicationId}}/approve",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "loans",
+                "applications",
+                "{{applicationId}}",
+                "approve"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"interest_rate_bps\": 1800\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Get loan (approved, owes 0)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"nothing owed before disbursement\", () => pm.expect(pm.response.json().balance_remaining_minor).to.eql(0));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/loans/{{loanId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "loans",
+                "{{loanId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Admin: disburse",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"idempotencyKey\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"paid out\", () => pm.response.to.have.status(201));",
+                  "const t = pm.response.json();",
+                  "pm.collectionVariables.set(\"disbursementId\", t.transaction_id);",
+                  "pm.test(\"full principal settled\", () => { pm.expect(t.status).to.eql(\"settled\"); pm.expect(t.amount_minor).to.eql(1500000); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Internal-Api-Key",
+                "value": "{{internalApiKey}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/loans/{{loanId}}/disburse",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "loans",
+                "{{loanId}}",
+                "disburse"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Admin: disburse - replay same key",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "pm.test(\"same transaction\", () => pm.expect(pm.response.json().transaction_id).to.eql(pm.collectionVariables.get(\"disbursementId\")));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Internal-Api-Key",
+                "value": "{{internalApiKey}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/loans/{{loanId}}/disburse",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "loans",
+                "{{loanId}}",
+                "disburse"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Admin: disburse again, new key (expect 409)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"idempotencyKey\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 409\", () => pm.response.to.have.status(409));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Internal-Api-Key",
+                "value": "{{internalApiKey}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/loans/{{loanId}}/disburse",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "loans",
+                "{{loanId}}",
+                "disburse"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get repayment schedule",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const s = pm.response.json().data;",
+                  "pm.test(\"3 unpaid installments\", () => { pm.expect(s).to.have.length(3); pm.expect(s.every((x) => !x.paid_flag)).to.be.true; });",
+                  "pm.test(\"principal portions add up\", () => pm.expect(s.reduce((n, x) => n + x.principal_minor, 0)).to.eql(1500000));",
+                  "pm.collectionVariables.set(\"installmentAmount\", s[0].installment_amount_minor);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/loans/{{loanId}}/schedule",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "loans",
+                "{{loanId}}",
+                "schedule"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Repay - wrong amount (expect 422)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"idempotencyKey\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 422\", () => pm.response.to.have.status(422));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/loans/{{loanId}}/repayments",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "loans",
+                "{{loanId}}",
+                "repayments"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"source_account_id\": \"{{loanAccountId}}\",\n  \"amount_minor\": 100\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Repay installment 1",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"idempotencyKey\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"repaid\", () => pm.response.to.have.status(201));",
+                  "pm.test(\"installment 1 marked paid\", () => pm.expect(pm.response.json().schedule_installment_marked_paid).to.eql(1));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/loans/{{loanId}}/repayments",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "loans",
+                "{{loanId}}",
+                "repayments"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"source_account_id\": \"{{loanAccountId}}\",\n  \"amount_minor\": {{installmentAmount}}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Get loan (1 of 3 paid)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const l = pm.response.json();",
+                  "pm.test(\"active with 1 installment paid\", () => { pm.expect(l.loan_status).to.eql(\"active\"); pm.expect(l.installments_paid).to.eql(1); });",
+                  "pm.test(\"next is installment 2\", () => pm.expect(l.next_installment.installment_number).to.eql(2));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/loans/{{loanId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "loans",
+                "{{loanId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "List my loans",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"includes the loan\", () => pm.expect(pm.response.json().data.map((l) => l.loan_id)).to.include(pm.collectionVariables.get(\"loanId\")));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/loans",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "loans"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Apply for a second loan",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 202\", () => pm.response.to.have.status(202));",
+                  "pm.collectionVariables.set(\"applicationId\", pm.response.json().application_id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/loans/applications",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "loans",
+                "applications"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"account_id\": \"{{loanAccountId}}\",\n  \"loan_type\": \"personal\",\n  \"requested_amount_minor\": 1500000,\n  \"currency_code\": \"NGN\",\n  \"term_months\": 3,\n  \"purpose\": \"Laptop for freelance work\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Admin: reject",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"rejected\", () => pm.expect(pm.response.json().status).to.eql(\"rejected\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Internal-Api-Key",
+                "value": "{{internalApiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/loans/applications/{{applicationId}}/reject",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "loans",
+                "applications",
+                "{{applicationId}}",
+                "reject"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Existing loan still in progress\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "6. Logout",
       "item": [
         {
           "name": "Logout",

@@ -98,3 +98,18 @@ END $$;
 
 CREATE INDEX IF NOT EXISTS idx_txn_sender ON transactions(sender_account_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_txn_receiver ON transactions(receiver_account_id, created_at);
+
+-- Loan disbursements and repayments always name their loan; nothing else does.
+DO $$ BEGIN
+    ALTER TABLE transactions
+        ADD CONSTRAINT txn_loan_link
+        CHECK ((transaction_type IN ('loan_disbursement', 'loan_repayment')) = (loan_id IS NOT NULL));
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_txn_loan ON transactions(loan_id) WHERE loan_id IS NOT NULL;
+
+-- A loan is paid out once.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_txn_loan_disbursement
+    ON transactions(loan_id)
+    WHERE transaction_type = 'loan_disbursement';

@@ -66,7 +66,7 @@ async function findOwnAccount(db, userId, accountId, { lock = false } = {}) {
 }
 
 function transferResponse(txn) {
-  const { ledger_entries, reverses_transaction_id, ...rest } = txn;
+  const { ledger_entries, reverses_transaction_id, loan_id, ...rest } = txn;
   return rest;
 }
 
@@ -139,7 +139,7 @@ export async function getTransaction(req, res) {
   const result = await pool.query(
     `SELECT t.transaction_id, t.transaction_type, t.sender_account_id,
             t.receiver_account_id, t.amount_minor, t.currency_code, t.status,
-            t.description, t.reverses_transaction_id, t.created_at, t.settled_at,
+            t.description, t.reverses_transaction_id, t.loan_id, t.created_at, t.settled_at,
             (SELECT r.transaction_id FROM transactions r
              WHERE r.reverses_transaction_id = t.transaction_id) AS reversed_by_transaction_id
      FROM transactions t
