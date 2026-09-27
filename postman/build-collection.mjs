@@ -415,6 +415,77 @@ const loans = [
   }),
 ];
 
+// Invoices: the signed-in user bills their own receiver account from the
+// sender account (a different user works the same way), then pays it from
+// the loan account opened in '5. Loans'.
+const invoiceBody = {
+  issuer_account_id: "{{senderAccountId}}",
+  billed_account_number: "{{receiverAccountNumber}}",
+  amount_due_minor: 25000,
+  currency_code: "NGN",
+  due_date: "2030-12-31",
+  description: "UI design, mobile app",
+};
+
+const invoices = [
+  req("Create invoice", "POST", "/invoices", {
+    body: invoiceBody,
+    description: "The Idempotency-Key is optional here.",
+    tests: [
+      status(201, "invoice created"),
+      "const i = pm.response.json();",
+      'pm.collectionVariables.set("invoiceId", i.invoice_id);',
+      'pm.test("open and issued by me", () => { pm.expect(i.invoice_status).to.eql("open"); pm.expect(i.direction).to.eql("issued"); });',
+    ],
+  }),
+  req("Create - due date in the past (expect 422)", "POST", "/invoices", {
+    body: { ...invoiceBody, due_date: "2020-01-01" },
+    tests: [status(422)],
+  }),
+  req("Get invoice", "GET", "/invoices/{{invoiceId}}", {
+    tests: [status(200), 'pm.test("amount due", () => pm.expect(pm.response.json().amount_due_minor).to.eql(25000));'],
+  }),
+  req("List my open issued invoices", "GET", "/invoices?role=issued&status=open&limit=20", {
+    tests: [
+      status(200),
+      'pm.test("includes the invoice", () => pm.expect(pm.response.json().data.map((i) => i.invoice_id)).to.include(pm.collectionVariables.get("invoiceId")));',
+      'pm.test("has pagination fields", () => pm.expect(pm.response.json()).to.have.property("next_cursor"));',
+    ],
+  }),
+  req("Pay invoice", "POST", "/invoices/{{invoiceId}}/pay", {
+    pre: newKey,
+    headers: [idem()],
+    body: { source_account_id: "{{loanAccountId}}" },
+    tests: [
+      status(200, "paid"),
+      "const i = pm.response.json();",
+      'pm.collectionVariables.set("settlingTransactionId", i.settling_transaction_id);',
+      'pm.test("paid with a settling transaction", () => { pm.expect(i.invoice_status).to.eql("paid"); pm.expect(i.settling_transaction_id).to.be.a("string"); });',
+    ],
+  }),
+  req("Pay - replay same key (no double charge)", "POST", "/invoices/{{invoiceId}}/pay", {
+    headers: [idem()],
+    body: { source_account_id: "{{loanAccountId}}" },
+    tests: [status(200), 'pm.test("same settling transaction", () => pm.expect(pm.response.json().settling_transaction_id).to.eql(pm.collectionVariables.get("settlingTransactionId")));'],
+  }),
+  req("Pay again, new key (expect 409)", "POST", "/invoices/{{invoiceId}}/pay", {
+    pre: newKey,
+    headers: [idem()],
+    body: { source_account_id: "{{loanAccountId}}" },
+    tests: [status(409)],
+  }),
+  req("Cancel a paid invoice (expect 409)", "POST", "/invoices/{{invoiceId}}/cancel", {
+    tests: [status(409)],
+  }),
+  req("Create a second invoice", "POST", "/invoices", {
+    body: { ...invoiceBody, amount_due_minor: 5000 },
+    tests: [status(201), 'pm.collectionVariables.set("invoiceId", pm.response.json().invoice_id);'],
+  }),
+  req("Cancel it", "POST", "/invoices/{{invoiceId}}/cancel", {
+    tests: [status(200), 'pm.test("cancelled", () => pm.expect(pm.response.json().invoice_status).to.eql("cancelled"));'],
+  }),
+];
+
 const logout = [
   req("Logout", "POST", "/auth/logout", { tests: [status(200)] }),
   req("Profile after logout (expect 401)", "GET", "/users/me", { tests: [status(401)] }),
@@ -425,7 +496,7 @@ const collection = {
   info: {
     name: "VergePay API",
     description:
-      "Auth, profile, account, transaction and loan endpoints for vergepay_api. Run the folders top to bottom (or use the Collection Runner). Postman's cookie jar keeps the session cookies, so always call http://localhost, not 127.0.0.1.",
+      "Auth, profile, account, transaction, loan and invoice endpoints for vergepay_api. Run the folders top to bottom (or use the Collection Runner). Postman's cookie jar keeps the session cookies, so always call http://localhost, not 127.0.0.1.",
     schema: "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
   },
   variable: [
@@ -447,6 +518,8 @@ const collection = {
     { key: "loanId", value: "" },
     { key: "disbursementId", value: "" },
     { key: "installmentAmount", value: "" },
+    { key: "invoiceId", value: "" },
+    { key: "settlingTransactionId", value: "" },
   ],
   item: [
     { name: "1. Auth", item: auth },
@@ -454,7 +527,8 @@ const collection = {
     { name: "3. Accounts", item: accounts },
     { name: "4. Transactions", item: transactions },
     { name: "5. Loans", item: loans },
-    { name: "6. Logout", item: logout },
+    { name: "6. Invoices", item: invoices },
+    { name: "7. Logout", item: logout },
   ],
 };
 

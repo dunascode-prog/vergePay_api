@@ -113,3 +113,6 @@ CREATE INDEX IF NOT EXISTS idx_txn_loan ON transactions(loan_id) WHERE loan_id I
 CREATE UNIQUE INDEX IF NOT EXISTS uq_txn_loan_disbursement
     ON transactions(loan_id)
     WHERE transaction_type = 'loan_disbursement';
+
+-- Paying an invoice is its own kind of money movement (API doc 8.2).
+ALTER TYPE transaction_type_enum ADD VALUE IF NOT EXISTS 'invoice_payment';

@@ -9,6 +9,7 @@ import {
   NotFoundError,
   ValidationError,
 } from "../utils/errorStr.js";
+import { decodeCursor, encodeCursor } from "../utils/pagination.js";
 import { isUuid, validationDetails } from "../utils/validation.js";
 
 const minorAmount = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
@@ -255,21 +256,6 @@ function parseQuery(schema, query) {
   return validation.data;
 }
 
-// Cursors are opaque to clients: base64url of the last row's position.
-function encodeCursor(row) {
-  return Buffer.from(JSON.stringify({ t: row.cursor_ts, id: row.entry_id })).toString("base64url");
-}
-
-function decodeCursor(cursor) {
-  try {
-    const { t, id } = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
-    if (typeof t === "string" && isUuid(id) && !Number.isNaN(Date.parse(t))) return { t, id };
-  } catch {
-    // fall through
-  }
-  throw new BadRequestError({ message: "Invalid pagination cursor." });
-}
-
 // GET /v1/accounts/:accountId/transactions
 // Reads the account's own ledger entries, so direction and running balance
 // come straight from the ledger; counterparty is derived for display.
@@ -316,7 +302,8 @@ export async function listAccountTransactions(req, res) {
 
   const hasMore = result.rows.length > q.limit;
   const page = result.rows.slice(0, q.limit);
-  const nextCursor = hasMore ? encodeCursor(page[page.length - 1]) : null;
+  const last = page[page.length - 1];
+  const nextCursor = hasMore ? encodeCursor(last.cursor_ts, last.entry_id) : null;
 
   return res.status(200).json({
     data: page.map(({ entry_id, cursor_ts, ...row }) => row),

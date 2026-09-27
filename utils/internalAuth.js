@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import env from "../env.js";
 import { ForbiddenError, UnauthorizedError } from "./errorStr.js";
+import { verifyAccessToken } from "./jwt.js";
 
 // Guards "Admin or System" endpoints (API doc 7.2, 11): loan approval,
 // disbursement and the underwriting queue. The caller is a back-office
@@ -26,4 +27,11 @@ export function requireInternalCaller(req, res, next) {
   }
   req.internalCaller = true;
   next();
+}
+
+// For "User or Admin" endpoints: a request carrying the internal key is a
+// back-office call; anything else must be a signed-in user.
+export function requireUserOrInternalCaller(req, res, next) {
+  if (req.header("X-Internal-Api-Key")) return requireInternalCaller(req, res, next);
+  return verifyAccessToken(req, res, next);
 }
