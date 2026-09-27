@@ -6,6 +6,7 @@ import {
   NotFoundError,
   ValidationError,
 } from "../utils/errorStr.js";
+import { validationDetails } from "../utils/validation.js";
 
 // DATE is formatted in SQL so it is returned as "YYYY-MM-DD" rather than a
 // timezone-shifted JS Date.
@@ -71,18 +72,6 @@ const FK_FIELDS = {
   fk_currency: "default_currency_code",
   fk_timezone: "timezone",
 };
-
-function validationDetails(error) {
-  const details = { ...error.flatten().fieldErrors };
-  for (const issue of error.issues) {
-    if (issue.code === "unrecognized_keys") {
-      for (const key of issue.keys) {
-        details[key] = ["This field cannot be updated here."];
-      }
-    }
-  }
-  return details;
-}
 
 export async function getMe(req, res) {
   const result = await pool.query(

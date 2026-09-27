@@ -48,3 +48,15 @@ CREATE TABLE IF NOT EXISTS account (
         FOREIGN KEY (user_id)
         REFERENCES users(user_id)
 );
+
+-- Balance is never negative (data model 6.4). Together with the row lock
+-- taken when money moves, this is what stops a double-spend.
+ALTER TABLE account ALTER COLUMN balance_minor SET DEFAULT 0;
+
+DO $$ BEGIN
+    ALTER TABLE account
+        ADD CONSTRAINT balance_non_negative CHECK (balance_minor >= 0);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_account_user ON account(user_id);
