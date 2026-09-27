@@ -87,3 +87,7 @@ temp/
 # Misc
 # ==========================
 .cache/
+# ==========================
+# Claude change log (local only, never committed)
+# ==========================
+CLAUDE_CHANGELOG.md

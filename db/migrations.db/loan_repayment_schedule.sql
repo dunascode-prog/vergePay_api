@@ -21,3 +21,33 @@ CREATE TABLE IF NOT EXISTS loan_repayment_schedule (
         FOREIGN KEY (paid_transaction_id)
         REFERENCES transactions(transaction_id)
 );
+
+-- How each installment splits between principal and interest, so a
+-- borrower can see what a payment actually pays down.
+ALTER TABLE loan_repayment_schedule ADD COLUMN IF NOT EXISTS principal_minor BIGINT NOT NULL;
+ALTER TABLE loan_repayment_schedule ADD COLUMN IF NOT EXISTS interest_minor BIGINT NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_schedule_installment
+    ON loan_repayment_schedule(loan_id, installment_number);
+
+-- One repayment transaction pays exactly one installment.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_schedule_paid_txn
+    ON loan_repayment_schedule(paid_transaction_id)
+    WHERE paid_transaction_id IS NOT NULL;
+
+DO $$ BEGIN
+    ALTER TABLE loan_repayment_schedule
+        ADD CONSTRAINT schedule_amounts_add_up
+        CHECK (principal_minor >= 0 AND interest_minor >= 0
+           AND installment_amount_minor = principal_minor + interest_minor
+           AND installment_amount_minor > 0);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+-- paid_flag and paid_transaction_id always agree.
+DO $$ BEGIN
+    ALTER TABLE loan_repayment_schedule
+        ADD CONSTRAINT schedule_paid_consistent
+        CHECK (paid_flag = (paid_transaction_id IS NOT NULL));
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;

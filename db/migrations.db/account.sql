@@ -49,14 +49,29 @@ CREATE TABLE IF NOT EXISTS account (
         REFERENCES users(user_id)
 );
 
--- Balance is never negative (data model 6.4). Together with the row lock
--- taken when money moves, this is what stops a double-spend.
-ALTER TABLE account ALTER COLUMN balance_minor SET DEFAULT 0;
+-- System accounts are platform-owned ledger accounts (no user), such as the
+-- external funding account on the other side of every top-up. They are the
+-- only accounts allowed to go negative.
+ALTER TABLE account ADD COLUMN IF NOT EXISTS is_system BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE account ALTER COLUMN user_id DROP NOT NULL;
 
 DO $$ BEGIN
     ALTER TABLE account
-        ADD CONSTRAINT balance_non_negative CHECK (balance_minor >= 0);
+        ADD CONSTRAINT account_owner_required CHECK (is_system OR user_id IS NOT NULL);
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 
+-- Balance is never negative for customer accounts (data model 6.4). With the
+-- row lock taken when money moves, this is what stops a double-spend.
+ALTER TABLE account ALTER COLUMN balance_minor SET DEFAULT 0;
+ALTER TABLE account DROP CONSTRAINT IF EXISTS balance_non_negative;
+ALTER TABLE account
+    ADD CONSTRAINT balance_non_negative CHECK (is_system OR balance_minor >= 0);
+
 CREATE INDEX IF NOT EXISTS idx_account_user ON account(user_id);
+
+-- One external funding account per supported currency.
+INSERT INTO account (account_type, account_number, currency_code, is_system)
+SELECT 'current', 'SYS-FUND-' || code, code, TRUE
+FROM currencies
+ON CONFLICT (account_number) DO NOTHING;

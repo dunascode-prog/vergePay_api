@@ -198,6 +198,33 @@ function changeStatus(action) {
             "Can't close an account with a non-zero balance. Move the funds out first.",
         });
       }
+      // The account a loan is paid into stays open for the life of the loan.
+      if (action === "close") {
+        const loans = await client.query(
+          `SELECT 1 FROM loans
+           WHERE account_id = $1 AND loan_status IN ('approved', 'active')
+           LIMIT 1`,
+          [before.account_id],
+        );
+        if (loans.rowCount > 0) {
+          throw new ConflictError({
+            message: "Can't close an account that has a loan in progress.",
+          });
+        }
+        // Open invoices are paid into the issuing account, so it has to stay
+        // open until they're paid or cancelled.
+        const invoices = await client.query(
+          `SELECT 1 FROM invoices
+           WHERE issuer_account_id = $1 AND invoice_status = 'open'
+           LIMIT 1`,
+          [before.account_id],
+        );
+        if (invoices.rowCount > 0) {
+          throw new ConflictError({
+            message: "Can't close an account with open invoices. Cancel them first.",
+          });
+        }
+      }
 
       const result = await client.query(
         `UPDATE account SET account_status = $2, updated_at = NOW()

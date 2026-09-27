@@ -51,5 +51,8 @@ const env = {
     model: process.env.OLLAMA_MODEL || "claude-sonnet-4-6",
   },
   corsOrigin: process.env.CORS_ORIGIN || "http://localhost:3000",
+  // shared secret for back-office callers (utils/internalAuth.js); unset
+  // disables those endpoints
+  internalApiKey: process.env.INTERNAL_API_KEY,
 };
 export default env;

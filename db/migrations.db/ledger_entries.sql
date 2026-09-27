@@ -35,3 +35,22 @@ CREATE TABLE IF NOT EXISTS ledger_entries (
         FOREIGN KEY (currency_code)
         REFERENCES currencies(code)
 );
+
+CREATE INDEX IF NOT EXISTS idx_ledger_account ON ledger_entries(account_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_ledger_txn ON ledger_entries(transaction_id);
+
+-- The ledger is append-only (data model 4.5): a mistake is corrected with a
+-- new, opposite entry, never by editing or deleting history. Enforced here so
+-- no code path, bug or manual query can bypass it.
+CREATE OR REPLACE FUNCTION forbid_ledger_mutation()
+RETURNS TRIGGER AS $$
+BEGIN
+    RAISE EXCEPTION 'ledger_entries is append-only: % is not allowed', TG_OP;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS ledger_entries_append_only ON ledger_entries;
+CREATE TRIGGER ledger_entries_append_only
+BEFORE UPDATE OR DELETE ON ledger_entries
+FOR EACH ROW
+EXECUTE FUNCTION forbid_ledger_mutation();
