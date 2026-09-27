@@ -498,6 +498,79 @@
               }
             }
           }
+        },
+        {
+          "name": "2FA: verify before setup (expect 409)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 409\", () => pm.response.to.have.status(409));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/2fa/verify",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "2fa",
+                "verify"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"123456\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Full 2FA setup needs codes from an authenticator app, so it's covered by the end-to-end tests rather than here."
+          }
+        },
+        {
+          "name": "2FA: disable without a recent code (expect 403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 403\", () => pm.response.to.have.status(403));",
+                  "pm.test(\"asks for 2FA\", () => pm.expect(pm.response.json().error.code).to.eql(\"TWO_FACTOR_REQUIRED\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/auth/2fa",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "2fa"
+              ]
+            }
+          }
         }
       ]
     },

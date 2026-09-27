@@ -54,5 +54,7 @@ const env = {
   // shared secret for back-office callers (utils/internalAuth.js); unset
   // disables those endpoints
   internalApiKey: process.env.INTERNAL_API_KEY,
+  // 64 hex characters; encrypts TOTP secrets at rest (utils/secretBox.js)
+  twoFactorEncryptionKey: process.env.TWO_FACTOR_ENCRYPTION_KEY,
 };
 export default env;

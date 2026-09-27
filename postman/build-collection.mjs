@@ -105,6 +105,14 @@ const profile = [
     body: { date_of_birth: "2015-01-01" },
     tests: [status(422)],
   }),
+  req("2FA: verify before setup (expect 409)", "POST", "/auth/2fa/verify", {
+    body: { code: "123456" },
+    description: "Full 2FA setup needs codes from an authenticator app, so it's covered by the end-to-end tests rather than here.",
+    tests: [status(409)],
+  }),
+  req("2FA: disable without a recent code (expect 403)", "DELETE", "/auth/2fa", {
+    tests: [status(403), 'pm.test("asks for 2FA", () => pm.expect(pm.response.json().error.code).to.eql("TWO_FACTOR_REQUIRED"));'],
+  }),
 ];
 
 const accounts = [

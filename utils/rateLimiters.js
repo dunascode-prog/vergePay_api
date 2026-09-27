@@ -37,6 +37,25 @@ export const signinLimiter = rateLimit({
   },
 });
 
+// 2FA codes: 5 wrong guesses per user per 15 minutes. A 6-digit code has a
+// million values, so this keeps guessing hopeless. Runs after the session
+// check so req.user is set.
+export const twoFactorLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  skipSuccessfulRequests: true,
+  keyGenerator: (req) => req.user.sub,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req, res, next) => {
+    next(
+      new TooManyRequestsError({
+        message: "Too many two-factor attempts. Please try again later.",
+      }),
+    );
+  },
+});
+
 // Money-moving endpoints: per signed-in user, not per IP (API doc 14.2). The
 // limit is generous; it exists to contain a runaway client retry loop.
 // Must run after verifyAccessToken so req.user is set.

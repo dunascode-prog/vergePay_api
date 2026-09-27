@@ -67,3 +67,17 @@ CREATE TRIGGER users_updated_at
 BEFORE UPDATE ON users
 FOR EACH ROW
 EXECUTE FUNCTION update_updated_at();
+
+-- TOTP two-factor authentication (API doc 2.4). Secrets are encrypted at
+-- rest (utils/secretBox.js). A new secret waits in the pending column until
+-- the user proves their authenticator app works by verifying one code.
+-- two_factor_last_step stops a code from being used twice.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS two_factor_secret_enc TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS two_factor_pending_secret_enc TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS two_factor_last_step BIGINT;
+
+DO $$ BEGIN
+    ALTER TABLE users ADD CONSTRAINT two_factor_secret_when_enabled
+        CHECK (NOT two_factor_enabled OR two_factor_secret_enc IS NOT NULL);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;

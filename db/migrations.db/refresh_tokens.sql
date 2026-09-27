@@ -19,3 +19,7 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
 );
 
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens(user_id);
+
+-- A session opened with a password but not yet the second factor stays
+-- limited across refreshes until the 2FA code is verified (API doc 2.2).
+ALTER TABLE refresh_tokens ADD COLUMN IF NOT EXISTS two_factor_pending BOOLEAN NOT NULL DEFAULT FALSE;
