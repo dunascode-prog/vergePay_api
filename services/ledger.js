@@ -1,4 +1,7 @@
+import { pool } from "../db/connectDB.js";
+import { withTransaction } from "../db/withTransaction.js";
 import { ConflictError, InsufficientFundsError, ValidationError } from "../utils/errorStr.js";
+import { IdempotencyConflictError } from "../utils/idempotency.js";
 
 // The ledger-posting routine (data model 7.1). Every movement of money, be it
 // a transfer, a top-up or a reversal, goes through postTransaction, and it
@@ -158,4 +161,52 @@ export async function postTransaction(
   );
 
   return { ...settled.rows[0], ledger_entries: entries.rows };
+}
+
+// The idempotency middleware stores a response only after the DB commit, so
+// a crash in that gap (or a request slower than the middleware's stale
+// window) lets a retry reach postTransaction again. The UNIQUE
+// transactions.idempotency_key then rejects the duplicate and its DB
+// transaction rolls back, so money never moves twice. These two helpers let
+// the caller turn that rejection into a normal replay of the original.
+function isDuplicateIdempotencyKey(err) {
+  return err.code === "23505" && err.constraint === "transactions_idempotency_key_key";
+}
+
+async function findTransactionByIdempotencyKey(db, idempotencyKey) {
+  const result = await db.query(
+    `SELECT ${TRANSACTION_COLUMNS} FROM transactions WHERE idempotency_key = $1`,
+    [idempotencyKey],
+  );
+  return result.rows[0] ?? null;
+}
+
+// Runs work(client) in a DB transaction and returns the transaction it
+// posted. If an earlier attempt with the same key already committed, returns
+// that one instead with replayed = true, but only if isSameRequest(existing)
+// confirms it was the same operation; a key reused for something else -> 422.
+//
+// The lookup happens before work runs, so a retry is answered with the
+// original result even when re-running the checks would now fail (the money
+// has already left, or the transfer is already reversed). The unique-key
+// fallback covers two attempts that race past the lookup together.
+export async function postOnce(idempotencyKey, work, isSameRequest) {
+  const replay = async () => {
+    const existing = await findTransactionByIdempotencyKey(pool, idempotencyKey);
+    if (!existing) return null;
+    if (!(await isSameRequest(existing))) throw new IdempotencyConflictError();
+    return { transaction: existing, replayed: true };
+  };
+
+  const earlier = await replay();
+  if (earlier) return earlier;
+
+  try {
+    return { transaction: await withTransaction(work), replayed: false };
+  } catch (err) {
+    if (!isDuplicateIdempotencyKey(err)) throw err;
+    const raced = await replay();
+    if (!raced) throw err;
+    return raced;
+  }
 }

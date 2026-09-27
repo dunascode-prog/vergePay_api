@@ -9,7 +9,7 @@ import { BadRequestError, ConflictError } from "./errorStr.js";
 // take the key over instead of getting 409 until the key expires.
 const STALE_IN_FLIGHT_SECONDS = 60;
 
-class IdempotencyConflictError extends AppError {
+export class IdempotencyConflictError extends AppError {
   constructor() {
     super({
       message:

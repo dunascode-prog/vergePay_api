@@ -4,8 +4,7 @@
 // the KYC check that transfers require.
 import z from "zod";
 import { pool } from "../db/connectDB.js";
-import { withTransaction } from "../db/withTransaction.js";
-import { postTransaction } from "../services/ledger.js";
+import { postOnce, postTransaction } from "../services/ledger.js";
 import { BadRequestError, NotFoundError, ValidationError } from "../utils/errorStr.js";
 import { isUuid, validationDetails } from "../utils/validation.js";
 
@@ -41,7 +40,12 @@ export async function fundOwnAccount(req, res) {
   const { accountId } = req.params;
   if (!isUuid(accountId)) throw new NotFoundError({ message: "Account not found." });
 
-  const transaction = await withTransaction(async (client) => {
+  const idempotencyKey = `${req.user.sub}:${req.idempotencyKey}`;
+  const isSameTopUp = (existing) =>
+    existing.receiver_account_id === accountId &&
+    existing.amount_minor === validation.data.amount_minor;
+
+  const { transaction, replayed } = await postOnce(idempotencyKey, async (client) => {
     const account = await client.query(
       `SELECT account_id, currency_code FROM account
        WHERE account_id = $1 AND user_id = $2 AND NOT is_system`,
@@ -62,10 +66,11 @@ export async function fundOwnAccount(req, res) {
       amountMinor: validation.data.amount_minor,
       currencyCode: currency_code,
       description: "Test top-up",
-      idempotencyKey: `${req.user.sub}:${req.idempotencyKey}`,
+      idempotencyKey,
     });
-  });
+  }, isSameTopUp);
 
+  if (replayed) res.set("Idempotent-Replayed", "true");
   const { ledger_entries, reverses_transaction_id, ...response } = transaction;
   return res.status(201).json(response);
 }

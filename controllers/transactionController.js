@@ -1,7 +1,6 @@
 import z from "zod";
 import { pool } from "../db/connectDB.js";
-import { withTransaction } from "../db/withTransaction.js";
-import { postTransaction } from "../services/ledger.js";
+import { postOnce, postTransaction } from "../services/ledger.js";
 import {
   BadRequestError,
   ConflictError,
@@ -75,7 +74,27 @@ function transferResponse(txn) {
 export async function createTransfer(req, res) {
   const body = parseBody(transferSchema, req.body);
 
-  const transaction = await withTransaction(async (client) => {
+  const idempotencyKey = storedKey(req);
+
+  // A replay must be the same transfer: same sender, receiver, amount and
+  // currency as the one already posted under this key.
+  const isSameTransfer = async (existing) => {
+    if (
+      existing.transaction_type !== "transfer" ||
+      existing.sender_account_id !== body.sender_account_id ||
+      existing.amount_minor !== body.amount_minor ||
+      existing.currency_code !== body.currency_code
+    ) {
+      return false;
+    }
+    if (body.receiver_account_id) return existing.receiver_account_id === body.receiver_account_id;
+    const receiver = await pool.query(`SELECT account_number FROM account WHERE account_id = $1`, [
+      existing.receiver_account_id,
+    ]);
+    return receiver.rows[0]?.account_number === body.receiver_account_number;
+  };
+
+  const { transaction, replayed } = await postOnce(idempotencyKey, async (client) => {
     await requireVerifiedKyc(client, req.user.sub);
     await findOwnAccount(client, req.user.sub, body.sender_account_id);
 
@@ -104,10 +123,11 @@ export async function createTransfer(req, res) {
       amountMinor: body.amount_minor,
       currencyCode: body.currency_code,
       description: body.description,
-      idempotencyKey: storedKey(req),
+      idempotencyKey,
     });
-  });
+  }, isSameTransfer);
 
+  if (replayed) res.set("Idempotent-Replayed", "true");
   return res.status(201).json(transferResponse(transaction));
 }
 
@@ -153,7 +173,10 @@ export async function reverseTransaction(req, res) {
   const { transactionId } = req.params;
   if (!isUuid(transactionId)) throw new NotFoundError({ message: "Transaction not found." });
 
-  const result = await withTransaction(async (client) => {
+  const idempotencyKey = storedKey(req);
+  const isSameReversal = (existing) => existing.reverses_transaction_id === transactionId;
+
+  const { transaction: reversal, replayed } = await postOnce(idempotencyKey, async (client) => {
     await requireVerifiedKyc(client, req.user.sub);
 
     const found = await client.query(
@@ -184,14 +207,14 @@ export async function reverseTransaction(req, res) {
       });
     }
 
-    const reversal = await postTransaction(client, {
+    const refund = await postTransaction(client, {
       transactionType: "refund",
       senderAccountId: original.receiver_account_id,
       receiverAccountId: original.sender_account_id,
       amountMinor: original.amount_minor,
       currencyCode: original.currency_code,
       description: `Reversal of ${original.transaction_id}`,
-      idempotencyKey: storedKey(req),
+      idempotencyKey,
       reversesTransactionId: original.transaction_id,
     });
 
@@ -200,14 +223,15 @@ export async function reverseTransaction(req, res) {
       [original.transaction_id],
     );
 
-    return {
-      reversal_transaction_id: reversal.transaction_id,
-      original_transaction_id: original.transaction_id,
-      status: reversal.status,
-    };
-  });
+    return refund;
+  }, isSameReversal);
 
-  return res.status(201).json(result);
+  if (replayed) res.set("Idempotent-Replayed", "true");
+  return res.status(201).json({
+    reversal_transaction_id: reversal.transaction_id,
+    original_transaction_id: reversal.reverses_transaction_id,
+    status: reversal.status,
+  });
 }
 
 // ---------------------------------------------------------------------------
