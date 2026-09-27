@@ -59,13 +59,19 @@ DO $$ BEGIN
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 
--- A paid invoice always names the transaction that settled it, and only a
--- paid one does.
-DO $$ BEGIN
-    ALTER TABLE invoices ADD CONSTRAINT invoice_paid_consistent
-        CHECK ((invoice_status = 'paid') = (settling_transaction_id IS NOT NULL));
-EXCEPTION WHEN duplicate_object THEN NULL;
-END $$;
+-- A paid invoice can be refunded in full by its issuer: the payment is
+-- returned by a new refund transaction and the invoice becomes refunded.
+ALTER TYPE invoice_status_enum ADD VALUE IF NOT EXISTS 'refunded';
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS refunded_at TIMESTAMPTZ;
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS refund_reason VARCHAR(255);
+
+-- Paid and refunded invoices always name the transaction that settled them,
+-- and no other invoice does. (Compared as text: a value added to an enum
+-- can't be used in the same transaction that adds it, and db:init runs
+-- every file in one transaction.)
+ALTER TABLE invoices DROP CONSTRAINT IF EXISTS invoice_paid_consistent;
+ALTER TABLE invoices ADD CONSTRAINT invoice_paid_consistent
+    CHECK ((invoice_status::text IN ('paid', 'refunded')) = (settling_transaction_id IS NOT NULL));
 
 -- One transaction settles at most one invoice (data model 5).
 CREATE UNIQUE INDEX IF NOT EXISTS uq_invoice_settling_txn

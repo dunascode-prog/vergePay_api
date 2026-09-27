@@ -43,7 +43,8 @@ export const signinLimiter = rateLimit({
 export const moneyLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 60,
-  keyGenerator: (req) => req.user.sub,
+  // back-office callers (utils/internalAuth.js) share one bucket
+  keyGenerator: (req) => req.user?.sub ?? "internal",
   standardHeaders: true,
   legacyHeaders: false,
   handler: (req, res, next) => {

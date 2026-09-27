@@ -477,6 +477,25 @@ const invoices = [
   req("Cancel a paid invoice (expect 409)", "POST", "/invoices/{{invoiceId}}/cancel", {
     tests: [status(409)],
   }),
+  req("Refund the paid invoice (as issuer)", "POST", "/invoices/{{invoiceId}}/refund", {
+    pre: newKey,
+    headers: [idem()],
+    body: { reason: "Project cancelled" },
+    description: "Returns the full payment from the issuer's account to the account that paid. Only the issuer (or a back-office caller) can refund.",
+    tests: [
+      status(200, "refunded"),
+      "const i = pm.response.json();",
+      'pm.test("refunded with a refund transaction", () => { pm.expect(i.invoice_status).to.eql("refunded"); pm.expect(i.refund_transaction_id).to.be.a("string"); });',
+    ],
+  }),
+  req("Refund again, new key (expect 409)", "POST", "/invoices/{{invoiceId}}/refund", {
+    pre: newKey,
+    headers: [idem()],
+    tests: [status(409)],
+  }),
+  req("Payment transaction now reversed", "GET", "/transactions/{{settlingTransactionId}}", {
+    tests: [status(200), 'pm.test("reversed", () => pm.expect(pm.response.json().status).to.eql("reversed"));'],
+  }),
   req("Create a second invoice", "POST", "/invoices", {
     body: { ...invoiceBody, amount_due_minor: 5000 },
     tests: [status(201), 'pm.collectionVariables.set("invoiceId", pm.response.json().invoice_id);'],

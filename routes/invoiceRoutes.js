@@ -5,6 +5,7 @@ import {
   getInvoice,
   listInvoices,
   payInvoice,
+  refundInvoice,
 } from "../controllers/invoiceController.js";
 import { idempotency, optionalIdempotency } from "../utils/idempotency.js";
 import { requireUserOrInternalCaller } from "../utils/internalAuth.js";
@@ -19,5 +20,13 @@ invoiceRouter.get("/:invoiceId", verifyAccessToken, getInvoice);
 invoiceRouter.post("/:invoiceId/pay", verifyAccessToken, moneyLimiter, idempotency, payInvoice);
 // "User or Admin" (API doc 8.2): the issuer, or a back-office caller
 invoiceRouter.post("/:invoiceId/cancel", requireUserOrInternalCaller, cancelInvoice);
+// the issuer, or a back-office caller settling a dispute
+invoiceRouter.post(
+  "/:invoiceId/refund",
+  requireUserOrInternalCaller,
+  moneyLimiter,
+  idempotency,
+  refundInvoice,
+);
 
 export default invoiceRouter;

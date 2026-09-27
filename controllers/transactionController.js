@@ -202,6 +202,13 @@ export async function reverseTransaction(req, res) {
         message: "Only the account that received this payment can reverse it.",
       });
     }
+    // An invoice payment is refunded through its invoice, so the invoice's
+    // status moves with the money.
+    if (original.transaction_type === "invoice_payment") {
+      throw new ConflictError({
+        message: "This is an invoice payment. Refund it with POST /v1/invoices/{invoice_id}/refund.",
+      });
+    }
     if (original.transaction_type !== "transfer" || original.status !== "settled") {
       throw new ConflictError({
         message: `Can't reverse a ${original.transaction_type} that is ${original.status}.`,

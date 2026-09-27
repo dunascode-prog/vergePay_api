@@ -19,7 +19,8 @@ import { isUuid, validationDetails } from "../utils/validation.js";
 //   issuer_account_id  the issuer's account, which the payment goes into
 //   account_id         the account billed, whose owner pays
 //
-// Stored status is open -> paid | cancelled. "overdue" is never stored: an
+// Stored status is open -> paid -> refunded, or open -> cancelled. A refund
+// returns the whole payment. "overdue" is never stored: an
 // open invoice past its due date (in the billed user's timezone) is reported
 // as overdue when read, so it can't go stale waiting for a job. Overdue
 // invoices can still be paid or cancelled.
@@ -51,9 +52,13 @@ const paySchema = z.strictObject({
   source_account_id: z.uuid(),
 });
 
+const refundSchema = z.strictObject({
+  reason: z.string().trim().min(1).max(255).optional(),
+});
+
 const listQuerySchema = z.strictObject({
   role: z.enum(["all", "issued", "received"]).default("all"),
-  status: z.enum(["open", "paid", "overdue", "cancelled"]).optional(),
+  status: z.enum(["open", "paid", "overdue", "cancelled", "refunded"]).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(20),
   after: z.string().optional(),
 });
@@ -98,6 +103,10 @@ const INVOICE_SELECT = `
            i.settling_transaction_id,
            i.paid_at,
            i.cancelled_at,
+           (SELECT r.transaction_id FROM transactions r
+            WHERE r.reverses_transaction_id = i.settling_transaction_id) AS refund_transaction_id,
+           i.refunded_at,
+           i.refund_reason,
            i.created_at
     FROM invoices i
     JOIN account ia ON ia.account_id = i.issuer_account_id
@@ -341,6 +350,120 @@ export async function payInvoice(req, res) {
     invoice_id: invoice.invoice_id,
     invoice_status: invoice.invoice_status,
     settling_transaction_id: invoice.settling_transaction_id,
+  });
+}
+
+// POST /v1/invoices/:invoiceId/refund
+// The issuer (who received the money), or a back-office caller settling a
+// dispute, returns a paid invoice's payment in full. Like a transfer
+// reversal (API doc 6.3) it's a new refund transaction in the opposite
+// direction, from the issuer's account back to the account that paid; the
+// original payment's ledger rows are untouched, only its status moves to
+// reversed. The billed user can't refund themselves.
+export async function refundInvoice(req, res) {
+  const { invoiceId } = req.params;
+  if (!isUuid(invoiceId)) throw notFound();
+  const validation = refundSchema.safeParse(req.body ?? {});
+  if (!validation.success) {
+    throw new ValidationError({ details: validationDetails(validation.error) });
+  }
+  const { reason = null } = validation.data;
+  const userId = req.internalCaller ? null : req.user.sub;
+  const idempotencyKey = `${userId ?? "internal"}:${req.idempotencyKey}`;
+
+  const isSameRefund = async (existing) => {
+    const settled = await pool.query(
+      `SELECT 1 FROM invoices WHERE invoice_id = $1 AND settling_transaction_id = $2`,
+      [invoiceId, existing.reverses_transaction_id],
+    );
+    return settled.rowCount > 0;
+  };
+
+  const { replayed } = await postOnce(idempotencyKey, async (client) => {
+    const found = await client.query(
+      `SELECT i.invoice_status, i.issuer_account_id, i.settling_transaction_id,
+              ia.user_id AS issuer_user_id, ba.user_id AS billed_user_id,
+              t.sender_account_id AS paid_from_account_id, t.amount_minor, t.currency_code
+       FROM invoices i
+       JOIN account ia ON ia.account_id = i.issuer_account_id
+       JOIN account ba ON ba.account_id = i.account_id
+       LEFT JOIN transactions t ON t.transaction_id = i.settling_transaction_id
+       WHERE i.invoice_id = $1
+       FOR UPDATE OF i`,
+      [invoiceId],
+    );
+    const invoice = found.rows[0];
+    if (!invoice) throw notFound();
+    if (userId) {
+      if (![invoice.issuer_user_id, invoice.billed_user_id].includes(userId)) throw notFound();
+      if (invoice.issuer_user_id !== userId) {
+        throw new ForbiddenError({ message: "Only the issuer can refund this invoice." });
+      }
+      await requireVerifiedKyc(
+        client,
+        userId,
+        "Identity verification is required before you can move money.",
+      );
+    }
+    if (invoice.invoice_status !== "paid") {
+      throw new ConflictError({
+        message:
+          invoice.invoice_status === "refunded"
+            ? "This invoice has already been refunded."
+            : `Only a paid invoice can be refunded; this one is ${invoice.invoice_status}.`,
+      });
+    }
+
+    // postTransaction checks the issuer's account is active and can cover
+    // the refund, and that the account that paid isn't closed.
+    const refund = await postTransaction(client, {
+      transactionType: "refund",
+      senderAccountId: invoice.issuer_account_id,
+      receiverAccountId: invoice.paid_from_account_id,
+      amountMinor: invoice.amount_minor,
+      currencyCode: invoice.currency_code,
+      description: `Refund of invoice ${invoiceId}`,
+      idempotencyKey,
+      reversesTransactionId: invoice.settling_transaction_id,
+    });
+
+    await client.query(
+      `UPDATE transactions SET status = 'reversed' WHERE transaction_id = $1`,
+      [invoice.settling_transaction_id],
+    );
+    await client.query(
+      `UPDATE invoices
+       SET invoice_status = 'refunded', refunded_at = NOW(), refund_reason = $2
+       WHERE invoice_id = $1`,
+      [invoiceId, reason],
+    );
+    await writeAudit(client, {
+      actorId: userId,
+      entityType: "invoice",
+      entityId: invoiceId,
+      action: "status_change",
+      before: { invoice_status: "paid" },
+      after: {
+        invoice_status: "refunded",
+        refund_transaction_id: refund.transaction_id,
+        refund_reason: reason,
+      },
+    });
+    return refund;
+  }, isSameRefund);
+
+  if (replayed) res.set("Idempotent-Replayed", "true");
+  const result = await pool.query(
+    `${INVOICE_SELECT} WHERE i.invoice_id = $2`,
+    [userId, invoiceId],
+  );
+  const invoice = result.rows[0];
+  return res.status(200).json({
+    invoice_id: invoice.invoice_id,
+    invoice_status: invoice.invoice_status,
+    settling_transaction_id: invoice.settling_transaction_id,
+    refund_transaction_id: invoice.refund_transaction_id,
+    refund_reason: invoice.refund_reason,
   });
 }
 
