@@ -97,7 +97,7 @@ async function attachLinkedCard(client, link, verified, txn) {
       expiry.month,
       expiry.year,
       verified.customer?.email || holder.rows[0].email,
-      card.issuer?.trim().replace(/s+/g, " ").slice(0, 100) || null,
+      card.issuer?.trim().replace(/\s+/g, " ").slice(0, 100) || null,
     ],
   );
   const cardId = inserted.rows[0].card_id;
