@@ -26,6 +26,7 @@ const files = [
   "migrations.db/transactions.sql",
   "migrations.db/loan_repayment_schedule.sql",
   "migrations.db/ledger_entries.sql",
+  "migrations.db/processor.sql",
   "migrations.db/invoice.sql",
 ];
 

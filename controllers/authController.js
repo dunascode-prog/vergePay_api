@@ -215,7 +215,8 @@ export const signIn = async (req, res, next) => {
     username,
     email,
     password_hash,
-    kyc_status
+    kyc_status,
+    two_factor_enabled
     FROM users
     WHERE email = $1
     `,
@@ -237,11 +238,16 @@ export const signIn = async (req, res, next) => {
     });
   }
 
-  await issueSession(res, user);
+  // With 2FA on, the password alone opens a limited session that can only
+  // verify the code (API doc 2.2).
+  await issueSession(res, user, { twoFactorPending: user.two_factor_enabled });
 
   return res.status(200).json({
     success: true,
-    message: "Login successful.",
+    message: user.two_factor_enabled
+      ? "Password accepted. Enter your two-factor code to finish signing in."
+      : "Login successful.",
+    two_factor_required: user.two_factor_enabled,
     user: {
       user_id: user.user_id,
       username: user.username,
@@ -279,7 +285,7 @@ export async function refreshToken(req, res, next) {
     WHERE token_hash = $1
       AND revoked_at IS NULL
       AND expires_at > NOW()
-    RETURNING user_id;
+    RETURNING user_id, two_factor_pending;
     `,
     [hashToken(refreshToken)],
   );
@@ -299,7 +305,10 @@ export async function refreshToken(req, res, next) {
     throw new UnauthorizedError({ message: "User not found." });
   }
 
-  await issueSession(res, user.rows[0]);
+  // A session still waiting for its 2FA code stays that way.
+  await issueSession(res, user.rows[0], {
+    twoFactorPending: consumed.rows[0].two_factor_pending,
+  });
 
   res.status(200).json({
     success: true,

@@ -54,5 +54,20 @@ const env = {
   // shared secret for back-office callers (utils/internalAuth.js); unset
   // disables those endpoints
   internalApiKey: process.env.INTERNAL_API_KEY,
+  // 64 hex characters; encrypts TOTP secrets at rest (utils/secretBox.js)
+  twoFactorEncryptionKey: process.env.TWO_FACTOR_ENCRYPTION_KEY,
+  // Flutterwave (services/flutterwave.js). Card and bank-transfer funding
+  // are off until FLW_SECRET_KEY is set.
+  flutterwave: {
+    secretKey: process.env.FLW_SECRET_KEY,
+    publicKey: process.env.FLW_PUBLIC_KEY,
+    // the "secret hash" set in the Flutterwave dashboard's webhook settings
+    secretHash: process.env.FLW_SECRET_HASH,
+    baseUrl: process.env.FLW_BASE_URL || "https://api.flutterwave.com/v3",
+    // where hosted checkout sends the customer afterwards (a UI page)
+    redirectUrl:
+      process.env.FLW_REDIRECT_URL ||
+      `${process.env.CORS_ORIGIN || "http://localhost:3000"}/dashboard/payments/complete`,
+  },
 };
 export default env;

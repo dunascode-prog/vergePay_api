@@ -1,4 +1,5 @@
 import express from "express";
+import { syncTransaction } from "../controllers/cardController.js";
 import {
   createTransfer,
   getTransaction,
@@ -20,5 +21,8 @@ transactionRouter.post(
   idempotency,
   reverseTransaction,
 );
+
+// re-checks a pending card payment with the payment processor
+transactionRouter.post("/:transactionId/sync", syncTransaction);
 
 export default transactionRouter;

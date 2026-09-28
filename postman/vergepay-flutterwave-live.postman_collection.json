@@ -1,0 +1,822 @@
+{
+  "info": {
+    "name": "VergePay API - real Flutterwave sandbox",
+    "description": "Card linking and a saved-card top-up against the REAL Flutterwave sandbox, with two manual browser steps. Start the API with `npm run start:flw-sandbox` (uses the FLW_* keys in .env). Run the requests one at a time, not in the Collection Runner.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8000/v1"
+    },
+    {
+      "key": "standInUrl",
+      "value": "http://localhost:9999"
+    },
+    {
+      "key": "toluEmail",
+      "value": "tolu.login@vergepay.dev"
+    },
+    {
+      "key": "toluPassword",
+      "value": "Signin#Tolu2026"
+    },
+    {
+      "key": "adaEmail",
+      "value": "ada.login@vergepay.dev"
+    },
+    {
+      "key": "adaPassword",
+      "value": "Signin$Ada7741"
+    },
+    {
+      "key": "internalApiKey",
+      "value": "",
+      "description": "INTERNAL_API_KEY from .env (the back-office key). npm run test:postman fills it in."
+    },
+    {
+      "key": "flwSecretHash",
+      "value": "stand-in-secret-hash",
+      "description": "The webhook secret hash. Matches npm run start:with-stand-in."
+    }
+  ],
+  "item": [
+    {
+      "name": "Real sandbox",
+      "description": "Manual steps are described on the requests that need them.",
+      "item": [
+        {
+          "name": "Sign in as Ada",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"session cookies set\", () => pm.expect(pm.cookies.has(\"access_token\") && pm.cookies.has(\"refresh_token\"), \"session cookies set\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/signin",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "signin"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{adaEmail}}\",\n  \"password\": \"{{adaPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Switches the session (Postman's cookie jar) to ada_login.\n\n**Expect:** 200\n\n**Checks:**\n- session cookies set"
+          }
+        },
+        {
+          "name": "Dev: reset Ada",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/dev/test-user/reset",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "dev",
+                "test-user",
+                "reset"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"two_factor\": true,\n  \"pending_loan_applications\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "**Expect:** 200"
+          }
+        },
+        {
+          "name": "Dev: mark me KYC-verified",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"verified\", () => pm.expect(j.kyc_status === \"verified\", \"verified\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/dev/kyc/verify",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "dev",
+                "kyc",
+                "verify"
+              ]
+            },
+            "description": "Development only. Money movement needs kyc_status = verified.\n\n**Expect:** 200\n\n**Checks:**\n- verified"
+          }
+        },
+        {
+          "name": "2FA: start setup",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"returns a base32 secret and otpauth URI\", () => pm.expect(/^[A-Z2-7]{32}$/.test(j.secret) && j.otpauth_uri.startsWith(\"otpauth://totp/\"), \"returns a base32 secret and otpauth URI\").to.be.true);",
+                  "try { pm.collectionVariables.set(\"totpSecret\", j.secret); } catch (e) {}",
+                  "try { pm.collectionVariables.set(\"totpLastStep\", \"\"); } catch (e) {}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/auth/2fa/enable",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "2fa",
+                "enable"
+              ]
+            },
+            "description": "**Expect:** 200\n\n**Checks:**\n- returns a base32 secret and otpauth URI"
+          }
+        },
+        {
+          "name": "2FA: confirm a code (Postman computes it)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const cryptoJs = require(\"crypto-js\");",
+                  "const secret = pm.collectionVariables.get(\"totpSecret\");",
+                  "const alphabet = \"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567\";",
+                  "let bits = \"\";",
+                  "for (const c of secret.replace(/=+$/, \"\")) bits += alphabet.indexOf(c).toString(2).padStart(5, \"0\");",
+                  "let keyHex = \"\";",
+                  "for (let i = 0; i + 8 <= bits.length; i += 8) keyHex += parseInt(bits.substr(i, 8), 2).toString(16).padStart(2, \"0\");",
+                  "const codeFor = (step) => {",
+                  "  const h = cryptoJs.HmacSHA1(cryptoJs.enc.Hex.parse(step.toString(16).padStart(16, \"0\")), cryptoJs.enc.Hex.parse(keyHex)).toString();",
+                  "  const o = parseInt(h.substr(-1), 16);",
+                  "  return String((parseInt(h.substr(o * 2, 8), 16) & 0x7fffffff) % 1000000).padStart(6, \"0\");",
+                  "};",
+                  "const nowStep = () => Math.floor(Date.now() / 30000);",
+                  "const last = Number(pm.collectionVariables.get(\"totpLastStep\") || -1);",
+                  "const advance = true;",
+                  "const pick = () => advance ? Math.max(nowStep(), last + 1) : nowStep();",
+                  "const finish = () => {",
+                  "  const step = pick();",
+                  "  pm.collectionVariables.set(\"totpCode\", codeFor(step));",
+                  "  if (advance) pm.collectionVariables.set(\"totpLastStep\", String(step));",
+                  "};",
+                  "const wanted = pick();",
+                  "if (wanted > nowStep() + 1) {",
+                  "  // every code in the current window is used up: wait for the next one",
+                  "  setTimeout(finish, (wanted - 1) * 30000 - Date.now() + 1500);",
+                  "} else finish();"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"2FA confirmed\", () => pm.expect(j.two_factor_enabled === true, \"2FA confirmed\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/2fa/verify",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "2fa",
+                "verify"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"{{totpCode}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "**Expect:** 200\n\n**Checks:**\n- 2FA confirmed"
+          }
+        },
+        {
+          "name": "Open the card account",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"idempotencyKey\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "try { pm.collectionVariables.set(\"liveAccountId\", j.account_id); } catch (e) {}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/accounts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "accounts"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"account_type\": \"current\",\n  \"currency_code\": \"NGN\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "**Expect:** 201"
+          }
+        },
+        {
+          "name": "Add a card (real checkout)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"idempotencyKey\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "pm.test(\"status is 202\", () => pm.response.to.have.status(202));",
+                  "pm.test(\"a real Flutterwave checkout URL\", () => pm.expect(String(j.checkout_url).startsWith(\"https://\"), \"a real Flutterwave checkout URL\").to.be.true);",
+                  "try { pm.collectionVariables.set(\"liveLinkTxnId\", j.transaction_id); } catch (e) {}",
+                  "try { pm.collectionVariables.set(\"liveCheckoutUrl\", j.checkout_url); } catch (e) {}",
+                  "console.log(\"OPEN THIS AND PAY:\", j.checkout_url);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/cards",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "cards"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"account_id\": \"{{liveAccountId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "MANUAL STEP AFTER THIS: open the checkout_url from the response in a browser and pay with Flutterwave's test card: 5531 8866 5214 2950, expiry 09/32, CVV 564, PIN 3310, OTP 12345. Then run the next request.\n\n**Expect:** 202\n\n**Checks:**\n- a real Flutterwave checkout URL"
+          }
+        },
+        {
+          "name": "After paying: sync the link",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"settled and card linked\", () => pm.expect(j.status === \"settled\" && j.card_link_status === \"linked\", \"settled and card linked\").to.be.true);",
+                  "try { pm.collectionVariables.set(\"liveCardId\", j.linked_card_id); } catch (e) {}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/transactions/{{liveLinkTxnId}}/sync",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "transactions",
+                "{{liveLinkTxnId}}",
+                "sync"
+              ]
+            },
+            "description": "Asks Flutterwave's verify API. If it still says pending, you haven't finished paying; pay, then send this again.\n\n**Expect:** 200\n\n**Checks:**\n- settled and card linked"
+          }
+        },
+        {
+          "name": "The card, display fields only",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Mastercard 553188 •••• 2950\", () => pm.expect(j.pan_bin === \"553188\" && j.pan_last_four === \"2950\", \"Mastercard 553188 •••• 2950\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/cards/{{liveCardId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "cards",
+                "{{liveCardId}}"
+              ]
+            },
+            "description": "**Expect:** 200\n\n**Checks:**\n- Mastercard 553188 •••• 2950"
+          }
+        },
+        {
+          "name": "Top up ₦200 from the saved card",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"idempotencyKey\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "pm.test(\"status is 202\", () => pm.response.to.have.status(202));",
+                  "pm.test(\"pending\", () => pm.expect(j.status === \"pending\" || j.status === \"settled\", \"pending\").to.be.true);",
+                  "try { pm.collectionVariables.set(\"liveChargeId\", j.transaction_id); } catch (e) {}",
+                  "if (j.authorization_url) console.log(\"OPEN THIS TO APPROVE:\", j.authorization_url);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/cards/{{liveCardId}}/charges",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "cards",
+                "{{liveCardId}}",
+                "charges"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount_minor\": 20000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Needs FLW_REDIRECT_URL to be a public https address (start the API with `npm run start:flw-sandbox`). MANUAL STEP AFTER THIS: if authorization_url is in the response, open it in a browser (Flutterwave's mock bank page approves by itself).\n\n**Expect:** 202\n\n**Checks:**\n- pending"
+          }
+        },
+        {
+          "name": "After approving: sync the top-up",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"settled\", () => pm.expect(j.status === \"settled\", \"settled\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/transactions/{{liveChargeId}}/sync",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "transactions",
+                "{{liveChargeId}}",
+                "sync"
+              ]
+            },
+            "description": "**Expect:** 200\n\n**Checks:**\n- settled"
+          }
+        },
+        {
+          "name": "Balance ₦300 (₦100 link + ₦200 top-up)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"balance is 30000\", () => pm.expect(j.balance_minor === 30000, \"balance is 30000\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/accounts/{{liveAccountId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "accounts",
+                "{{liveAccountId}}"
+              ]
+            },
+            "description": "**Expect:** 200\n\n**Checks:**\n- balance is 30000"
+          }
+        },
+        {
+          "name": "Real sandbox bank-transfer number",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "pm.test(\"status is one of 200/201\", () => pm.expect([200,201]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/accounts/{{liveAccountId}}/virtual-account",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "accounts",
+                "{{liveAccountId}}",
+                "virtual-account"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"bvn\": \"22222223883\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Needs a first and last name on the profile (folder 8 of the main suite sets Ada's).\n\n**Expect:** 200 or 201"
+          }
+        },
+        {
+          "name": "2FA: confirm a fresh code",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const cryptoJs = require(\"crypto-js\");",
+                  "const secret = pm.collectionVariables.get(\"totpSecret\");",
+                  "const alphabet = \"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567\";",
+                  "let bits = \"\";",
+                  "for (const c of secret.replace(/=+$/, \"\")) bits += alphabet.indexOf(c).toString(2).padStart(5, \"0\");",
+                  "let keyHex = \"\";",
+                  "for (let i = 0; i + 8 <= bits.length; i += 8) keyHex += parseInt(bits.substr(i, 8), 2).toString(16).padStart(2, \"0\");",
+                  "const codeFor = (step) => {",
+                  "  const h = cryptoJs.HmacSHA1(cryptoJs.enc.Hex.parse(step.toString(16).padStart(16, \"0\")), cryptoJs.enc.Hex.parse(keyHex)).toString();",
+                  "  const o = parseInt(h.substr(-1), 16);",
+                  "  return String((parseInt(h.substr(o * 2, 8), 16) & 0x7fffffff) % 1000000).padStart(6, \"0\");",
+                  "};",
+                  "const nowStep = () => Math.floor(Date.now() / 30000);",
+                  "const last = Number(pm.collectionVariables.get(\"totpLastStep\") || -1);",
+                  "const advance = true;",
+                  "const pick = () => advance ? Math.max(nowStep(), last + 1) : nowStep();",
+                  "const finish = () => {",
+                  "  const step = pick();",
+                  "  pm.collectionVariables.set(\"totpCode\", codeFor(step));",
+                  "  if (advance) pm.collectionVariables.set(\"totpLastStep\", String(step));",
+                  "};",
+                  "const wanted = pick();",
+                  "if (wanted > nowStep() + 1) {",
+                  "  // every code in the current window is used up: wait for the next one",
+                  "  setTimeout(finish, (wanted - 1) * 30000 - Date.now() + 1500);",
+                  "} else finish();"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"confirmed\", () => pm.expect(j.two_factor_enabled === true, \"confirmed\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/2fa/verify",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "2fa",
+                "verify"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"{{totpCode}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Re-confirm to switch 2FA off.\n\n**Expect:** 200\n\n**Checks:**\n- confirmed"
+          }
+        },
+        {
+          "name": "2FA off",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/auth/2fa",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "2fa"
+              ]
+            },
+            "description": "**Expect:** 200"
+          }
+        }
+      ]
+    }
+  ]
+}

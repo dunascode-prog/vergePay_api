@@ -12,6 +12,10 @@ import {
   getBalanceHistory,
   listAccountTransactions,
 } from "../controllers/transactionController.js";
+import {
+  createVirtualAccount,
+  getVirtualAccount,
+} from "../controllers/virtualAccountController.js";
 import { idempotency } from "../utils/idempotency.js";
 import { verifyAccessToken } from "../utils/jwt.js";
 
@@ -31,5 +35,9 @@ accountRouter.get("/:accountId/balance-history", getBalanceHistory);
 accountRouter.post("/:accountId/freeze", freezeAccount);
 accountRouter.post("/:accountId/unfreeze", unfreezeAccount);
 accountRouter.post("/:accountId/close", closeAccount);
+
+// a permanent bank account number for funding by bank transfer
+accountRouter.get("/:accountId/virtual-account", getVirtualAccount);
+accountRouter.post("/:accountId/virtual-account", createVirtualAccount);
 
 export default accountRouter;

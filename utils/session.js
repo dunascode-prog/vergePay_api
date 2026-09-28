@@ -15,11 +15,28 @@ export function hashToken(token) {
 
 // Issues a new access/refresh token pair, stores the refresh token's hash and
 // sets both cookies. Cookie and DB expiry follow the JWT expiry from env.
-export async function issueSession(res, user) {
+//
+// Two-factor state rides in the access token (API doc 2.2, 2.4):
+//   twoFactorPending   password accepted, 2FA code not yet verified; the
+//                      token only works on POST /v1/auth/2fa/verify, and
+//                      the refresh row remembers it so a refresh can't
+//                      upgrade the session
+//   twoFactorAt        when a 2FA code was last verified (epoch seconds);
+//                      "User + 2FA" actions need this to be recent
+export async function issueSession(
+  res,
+  user,
+  { twoFactorPending = false, twoFactorAt = null } = {},
+) {
   const { accessSecret, refreshSecret, accessExpiry, refreshExpiry } =
     env.jwtdet;
   const payload = { sub: user.user_id, email: user.email };
-  const accessToken = createAccessToken(payload, accessSecret, accessExpiry);
+  const accessClaims = {
+    ...payload,
+    ...(twoFactorPending && { tfa: "pending" }),
+    ...(twoFactorAt && { tfa_at: twoFactorAt }),
+  };
+  const accessToken = createAccessToken(accessClaims, accessSecret, accessExpiry);
   const refreshToken = createRefreshToken(payload, refreshSecret, refreshExpiry);
 
   await pool.query(
@@ -27,14 +44,16 @@ export async function issueSession(res, user) {
     INSERT INTO refresh_tokens (
         user_id,
         token_hash,
-        expires_at
+        expires_at,
+        two_factor_pending
     )
-    VALUES ($1, $2, $3)
+    VALUES ($1, $2, $3, $4)
     `,
     [
       user.user_id,
       hashToken(refreshToken),
       new Date(Date.now() + env.jwtdet.refreshExpiryMs),
+      twoFactorPending,
     ],
   );
 

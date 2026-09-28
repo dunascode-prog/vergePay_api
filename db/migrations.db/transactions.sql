@@ -116,3 +116,20 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_txn_loan_disbursement
 
 -- Paying an invoice is its own kind of money movement (API doc 8.2).
 ALTER TYPE transaction_type_enum ADD VALUE IF NOT EXISTS 'invoice_payment';
+
+-- Money that arrives through the payment processor (Flutterwave): card
+-- charges and bank transfers into a virtual account.
+ALTER TYPE transaction_type_enum ADD VALUE IF NOT EXISTS 'bank_deposit';
+
+-- processor_tx_ref is the reference we give the processor for a charge;
+-- processor_transaction_id is the processor's own id for it, once known.
+-- Both unique, so one processor payment can never be credited twice.
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS processor_tx_ref VARCHAR(100) UNIQUE;
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS processor_transaction_id VARCHAR(50) UNIQUE;
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS failure_reason VARCHAR(255);
+
+CREATE INDEX IF NOT EXISTS idx_txn_card ON transactions(card_id, created_at) WHERE card_id IS NOT NULL;
+
+-- Where the customer must go to approve a pending card charge (3-D Secure),
+-- when the processor asks for it. Kept so a retried request can return it.
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS processor_authorization_url TEXT;

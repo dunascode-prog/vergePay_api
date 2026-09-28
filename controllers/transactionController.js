@@ -1,6 +1,6 @@
 import z from "zod";
 import { pool } from "../db/connectDB.js";
-import { postOnce, postTransaction } from "../services/ledger.js";
+import { postOnce, postTransaction, publicTransaction } from "../services/ledger.js";
 import {
   BadRequestError,
   ConflictError,
@@ -66,11 +66,6 @@ async function findOwnAccount(db, userId, accountId, { lock = false } = {}) {
   return result.rows[0];
 }
 
-function transferResponse(txn) {
-  const { ledger_entries, reverses_transaction_id, loan_id, ...rest } = txn;
-  return rest;
-}
-
 // POST /v1/transactions
 export async function createTransfer(req, res) {
   const body = parseBody(transferSchema, req.body);
@@ -129,7 +124,7 @@ export async function createTransfer(req, res) {
   }, isSameTransfer);
 
   if (replayed) res.set("Idempotent-Replayed", "true");
-  return res.status(201).json(transferResponse(transaction));
+  return res.status(201).json(publicTransaction(transaction));
 }
 
 // GET /v1/transactions/:transactionId  (caller must own the sender or receiver)
@@ -140,7 +135,7 @@ export async function getTransaction(req, res) {
   const result = await pool.query(
     `SELECT t.transaction_id, t.transaction_type, t.sender_account_id,
             t.receiver_account_id, t.amount_minor, t.currency_code, t.status,
-            t.description, t.reverses_transaction_id, t.loan_id, t.created_at, t.settled_at,
+            t.description, t.reverses_transaction_id, t.loan_id, t.card_id, t.created_at, t.settled_at,
             (SELECT r.transaction_id FROM transactions r
              WHERE r.reverses_transaction_id = t.transaction_id) AS reversed_by_transaction_id
      FROM transactions t
@@ -200,6 +195,13 @@ export async function reverseTransaction(req, res) {
     if (original.receiver_user_id !== req.user.sub) {
       throw new ForbiddenError({
         message: "Only the account that received this payment can reverse it.",
+      });
+    }
+    // An invoice payment is refunded through its invoice, so the invoice's
+    // status moves with the money.
+    if (original.transaction_type === "invoice_payment") {
+      throw new ConflictError({
+        message: "This is an invoice payment. Refund it with POST /v1/invoices/{invoice_id}/refund.",
       });
     }
     if (original.transaction_type !== "transfer" || original.status !== "settled") {

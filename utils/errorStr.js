@@ -117,3 +117,17 @@ export class TokenExpiredError extends AppError {
     });
   }
 }
+
+// 403, not 401: the session is valid, and the UI refreshes on 401. The
+// client should ask for a 2FA code and call POST /v1/auth/2fa/verify.
+export class TwoFactorRequiredError extends AppError {
+  constructor({ message = "Two-factor confirmation required." } = {}) {
+    super({ message, statusCode: 403, code: "TWO_FACTOR_REQUIRED" });
+  }
+}
+
+export class InvalidTwoFactorCodeError extends AppError {
+  constructor({ message = "That two-factor code isn't valid. Codes change every 30 seconds and each works once." } = {}) {
+    super({ message, statusCode: 422, code: "INVALID_TWO_FACTOR_CODE" });
+  }
+}

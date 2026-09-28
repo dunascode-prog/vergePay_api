@@ -4,10 +4,9 @@ import { ConflictError, InsufficientFundsError, ValidationError } from "../utils
 import { IdempotencyConflictError } from "../utils/idempotency.js";
 
 // The ledger-posting routine (data model 7.1). Every movement of money, be it
-// a transfer, a top-up, a reversal or a loan payment, goes through
-// postTransaction, and it must run inside the caller's DB transaction (pass
-// the client from withTransaction) so that everything below commits or rolls
-// back together:
+// a transfer, a top-up, a reversal, a loan payment or a card payment, goes
+// through here, inside the caller's DB transaction (pass the client from
+// withTransaction) so that everything below commits or rolls back together:
 //
 //   1. lock both accounts, always in account_id order, so two opposite
 //      transfers (A->B and B->A) can't deadlock
@@ -19,6 +18,12 @@ import { IdempotencyConflictError } from "../utils/idempotency.js";
 //
 // The row locks mean a concurrent posting against either account waits for
 // this one, then re-reads the updated balance, so money can't be spent twice.
+//
+// postTransaction does all six at once. Money that settles later, a card
+// charge waiting on the payment processor, is split in two: step 3 with
+// createPendingTransaction when it starts, the rest with
+// settlePendingTransaction once the processor confirms (API doc 10.2: for
+// card payments the ledger is written on settlement, not at initiation).
 
 const TRANSACTION_COLUMNS = `
     transaction_id,
@@ -31,23 +36,43 @@ const TRANSACTION_COLUMNS = `
     description,
     reverses_transaction_id,
     loan_id,
+    card_id,
+    processor_tx_ref,
+    processor_transaction_id,
+    failure_reason,
     created_at,
     settled_at`;
 
-export async function postTransaction(
-  client,
-  {
-    transactionType,
-    senderAccountId,
-    receiverAccountId,
-    amountMinor,
-    currencyCode,
-    description = null,
-    idempotencyKey,
-    reversesTransactionId = null,
-    loanId = null,
-  },
-) {
+// The fields a transfer-style response shows.
+export function publicTransaction(txn) {
+  const {
+    transaction_id,
+    transaction_type,
+    sender_account_id,
+    receiver_account_id,
+    amount_minor,
+    currency_code,
+    status,
+    description,
+    created_at,
+    settled_at,
+  } = txn;
+  return {
+    transaction_id,
+    transaction_type,
+    sender_account_id,
+    receiver_account_id,
+    amount_minor,
+    currency_code,
+    status,
+    description,
+    created_at,
+    settled_at,
+  };
+}
+
+// Steps 1 and 2.
+async function lockAndCheckAccounts(client, { senderAccountId, receiverAccountId, amountMinor, currencyCode }) {
   const locked = await client.query(
     `SELECT account_id, account_status, currency_code, balance_minor, is_system
      FROM account
@@ -92,7 +117,27 @@ export async function postTransaction(
       message: `Account balance (${sender.balance_minor}) is less than the requested debit (${amountMinor}).`,
     });
   }
+  return { sender, receiver };
+}
 
+// Step 3.
+async function insertPending(
+  client,
+  {
+    transactionType,
+    senderAccountId,
+    receiverAccountId,
+    amountMinor,
+    currencyCode,
+    description = null,
+    idempotencyKey,
+    reversesTransactionId = null,
+    loanId = null,
+    cardId = null,
+    processorTxRef = null,
+    processorTransactionId = null,
+  },
+) {
   const inserted = await client.query(
     `INSERT INTO transactions (
         idempotency_key,
@@ -104,10 +149,13 @@ export async function postTransaction(
         status,
         description,
         reverses_transaction_id,
-        loan_id
+        loan_id,
+        card_id,
+        processor_tx_ref,
+        processor_transaction_id
      )
-     VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, $8, $9)
-     RETURNING transaction_id`,
+     VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, $8, $9, $10, $11, $12)
+     RETURNING ${TRANSACTION_COLUMNS}`,
     [
       idempotencyKey,
       transactionType,
@@ -118,10 +166,18 @@ export async function postTransaction(
       description,
       reversesTransactionId,
       loanId,
+      cardId,
+      processorTxRef,
+      processorTransactionId,
     ],
   );
-  const transactionId = inserted.rows[0].transaction_id;
+  return inserted.rows[0];
+}
 
+// Steps 4 to 6, for a pending transaction whose accounts are already locked
+// and checked.
+async function writeEntriesAndSettle(client, txn, sender, receiver) {
+  const { transaction_id: transactionId, amount_minor: amountMinor, currency_code: currencyCode } = txn;
   const senderBalanceAfter = sender.balance_minor - amountMinor;
   const receiverBalanceAfter = receiver.balance_minor + amountMinor;
 
@@ -139,8 +195,8 @@ export async function postTransaction(
         ($2, $3, 'CREDIT', $4, $5, $7)
      RETURNING entry_id, account_id, direction, amount_minor, running_balance_after_minor`,
     [
-      senderAccountId,
-      receiverAccountId,
+      sender.account_id,
+      receiver.account_id,
       transactionId,
       amountMinor,
       currencyCode,
@@ -154,7 +210,7 @@ export async function postTransaction(
      SET balance_minor = CASE account_id WHEN $1 THEN $3::bigint ELSE $4::bigint END,
          updated_at = NOW()
      WHERE account_id IN ($1, $2)`,
-    [senderAccountId, receiverAccountId, senderBalanceAfter, receiverBalanceAfter],
+    [sender.account_id, receiver.account_id, senderBalanceAfter, receiverBalanceAfter],
   );
 
   const settled = await client.query(
@@ -166,6 +222,73 @@ export async function postTransaction(
   );
 
   return { ...settled.rows[0], ledger_entries: entries.rows };
+}
+
+// Posts a transaction that settles immediately: all six steps.
+export async function postTransaction(client, params) {
+  const { sender, receiver } = await lockAndCheckAccounts(client, params);
+  const pending = await insertPending(client, params);
+  return writeEntriesAndSettle(client, pending, sender, receiver);
+}
+
+// Step 3 only: records money that is on its way (a card charge sent to the
+// payment processor). No ledger entries and no balance change until
+// settlePendingTransaction. Takes the same params as postTransaction.
+export async function createPendingTransaction(client, params) {
+  return insertPending(client, params);
+}
+
+// Loads and locks a transaction row, so settling and failing it can't race.
+async function lockTransaction(client, transactionId) {
+  const result = await client.query(
+    `SELECT ${TRANSACTION_COLUMNS} FROM transactions WHERE transaction_id = $1 FOR UPDATE`,
+    [transactionId],
+  );
+  return result.rows[0] ?? null;
+}
+
+// Steps 1, 2 and 4 to 6 for a pending transaction, once the processor has
+// confirmed it. Settling one that is no longer pending changes nothing and
+// returns it with alreadyFinal = true, so repeated confirmations (webhook
+// retries, a client polling) are harmless.
+export async function settlePendingTransaction(client, transactionId, { processorTransactionId = null } = {}) {
+  const txn = await lockTransaction(client, transactionId);
+  if (!txn) throw new Error(`Transaction ${transactionId} not found.`);
+  if (txn.status !== "pending") return { ...txn, alreadyFinal: true };
+
+  if (processorTransactionId && !txn.processor_transaction_id) {
+    await client.query(
+      `UPDATE transactions SET processor_transaction_id = $2 WHERE transaction_id = $1`,
+      [transactionId, processorTransactionId],
+    );
+  }
+  const { sender, receiver } = await lockAndCheckAccounts(client, {
+    senderAccountId: txn.sender_account_id,
+    receiverAccountId: txn.receiver_account_id,
+    amountMinor: txn.amount_minor,
+    currencyCode: txn.currency_code,
+  });
+  const settled = await writeEntriesAndSettle(client, txn, sender, receiver);
+  return { ...settled, alreadyFinal: false };
+}
+
+// Marks a pending transaction failed, with the reason. No ledger rows ever
+// existed for it, so there is nothing to undo.
+export async function failPendingTransaction(client, transactionId, reason, { processorTransactionId = null } = {}) {
+  const txn = await lockTransaction(client, transactionId);
+  if (!txn) throw new Error(`Transaction ${transactionId} not found.`);
+  if (txn.status !== "pending") return { ...txn, alreadyFinal: true };
+
+  const result = await client.query(
+    `UPDATE transactions
+     SET status = 'failed',
+         failure_reason = $2,
+         processor_transaction_id = COALESCE(processor_transaction_id, $3)
+     WHERE transaction_id = $1
+     RETURNING ${TRANSACTION_COLUMNS}`,
+    [transactionId, reason?.slice(0, 255) ?? null, processorTransactionId],
+  );
+  return { ...result.rows[0], alreadyFinal: false };
 }
 
 // The idempotency middleware stores a response only after the DB commit, so
