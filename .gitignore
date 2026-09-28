@@ -91,3 +91,6 @@ temp/
 # Claude change log (local only, never committed)
 # ==========================
 CLAUDE_CHANGELOG.md
+
+# Newman's report from npm run test:postman
+postman/last-run.json

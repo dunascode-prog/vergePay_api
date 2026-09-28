@@ -8,6 +8,10 @@
     "start-dev": "nodemon server.js",
     "db:init": "node db/initDB.js",
     "postman:build": "node postman/build-collection.mjs",
+    "flw:stand-in": "node postman/flutterwave-stand-in.mjs",
+    "start:with-stand-in": "node postman/start-api-with-stand-in.mjs",
+    "start:flw-sandbox": "node postman/start-api-for-sandbox.mjs",
+    "test:postman": "node postman/run-suite.mjs",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "dunascode",
