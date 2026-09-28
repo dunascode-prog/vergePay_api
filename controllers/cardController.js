@@ -362,6 +362,8 @@ export async function updateCardControls(req, res) {
 // ---------------------------------------------------------------------------
 // Charging a saved card
 
+// authorization_url is set while the card's bank waits for the customer to
+// approve the charge (3-D Secure): the client should open it.
 function chargeResponse(state) {
   return {
     transaction_id: state.transaction_id,
@@ -370,9 +372,15 @@ function chargeResponse(state) {
     amount_minor: state.amount_minor,
     currency_code: state.currency_code,
     status: state.status,
+    authorization_url: state.status === "pending" ? state.processor_authorization_url ?? null : null,
     failure_reason: state.failure_reason,
   };
 }
+
+const CHARGE_STATE = `
+    SELECT transaction_id, card_id, receiver_account_id AS account_id, amount_minor,
+           currency_code, status, failure_reason, processor_authorization_url
+    FROM transactions WHERE transaction_id = $1`;
 
 // POST /v1/cards/:cardId/charges
 // Tops up the card's account. Returns 202 with the transaction pending (or
@@ -381,6 +389,9 @@ function chargeResponse(state) {
 // and today's card top-ups must stay within the daily limit.
 export async function chargeCard(req, res) {
   const body = parseBody(chargeSchema, req.body);
+  // Checked before anything is recorded, so a misconfigured server can't
+  // leave a pending charge that was never sent.
+  flutterwave.chargeRedirectUrl();
   const userId = req.user.sub;
   const idempotencyKey = `${userId}:${req.idempotencyKey}`;
 
@@ -390,7 +401,9 @@ export async function chargeCard(req, res) {
   if (earlier.rows[0]) {
     if (earlier.rows[0].card_id !== req.params.cardId) throw new IdempotencyConflictError();
     res.set("Idempotent-Replayed", "true");
-    return res.status(202).json(chargeResponse(await syncCardPayment(earlier.rows[0].transaction_id)));
+    await syncCardPayment(earlier.rows[0].transaction_id);
+    const replay = await pool.query(CHARGE_STATE, [earlier.rows[0].transaction_id]);
+    return res.status(202).json(chargeResponse(replay.rows[0]));
   }
 
   const { txn, card } = await withTransaction(async (client) => {
@@ -471,22 +484,22 @@ export async function chargeCard(req, res) {
     throw err;
   }
 
-  if (charge?.id != null) {
-    await pool.query(
-      `UPDATE transactions SET processor_transaction_id = $2
-       WHERE transaction_id = $1 AND processor_transaction_id IS NULL`,
-      [txn.transaction_id, String(charge.id)],
-    );
+  const authorization = charge?.meta?.authorization;
+  const authorizationUrl = authorization?.mode === "redirect" ? authorization.redirect : null;
+  if (authorization && !authorizationUrl) {
+    logger.error({ message: "unhandled card authorization mode", transactionId: txn.transaction_id, mode: authorization.mode });
   }
+  await pool.query(
+    `UPDATE transactions
+     SET processor_transaction_id = COALESCE(processor_transaction_id, $2),
+         processor_authorization_url = $3
+     WHERE transaction_id = $1`,
+    [txn.transaction_id, charge?.id != null ? String(charge.id) : null, authorizationUrl],
+  );
   // If the processor already says successful, settle straight away.
-  const state = charge?.status === "successful" ? await syncCardPayment(txn.transaction_id) : null;
-  const current = state ?? (await pool.query(
-    `SELECT transaction_id, card_id, receiver_account_id AS account_id, amount_minor,
-            currency_code, status, failure_reason
-     FROM transactions WHERE transaction_id = $1`,
-    [txn.transaction_id],
-  )).rows[0];
-  return res.status(202).json(chargeResponse(current));
+  if (charge?.status === "successful") await syncCardPayment(txn.transaction_id);
+  const current = await pool.query(CHARGE_STATE, [txn.transaction_id]);
+  return res.status(202).json(chargeResponse(current.rows[0]));
 }
 
 // POST /v1/transactions/:transactionId/sync

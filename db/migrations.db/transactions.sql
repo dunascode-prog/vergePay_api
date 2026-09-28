@@ -129,3 +129,7 @@ ALTER TABLE transactions ADD COLUMN IF NOT EXISTS processor_transaction_id VARCH
 ALTER TABLE transactions ADD COLUMN IF NOT EXISTS failure_reason VARCHAR(255);
 
 CREATE INDEX IF NOT EXISTS idx_txn_card ON transactions(card_id, created_at) WHERE card_id IS NOT NULL;
+
+-- Where the customer must go to approve a pending card charge (3-D Secure),
+-- when the processor asks for it. Kept so a retried request can return it.
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS processor_authorization_url TEXT;

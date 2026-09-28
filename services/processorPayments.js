@@ -74,7 +74,10 @@ async function attachLinkedCard(client, link, verified, txn) {
     `SELECT email, NULLIF(concat_ws(' ', first_name, last_name), '') AS name FROM users WHERE user_id = $1`,
     [link.user_id],
   );
-  const cardholderName = (verified.customer?.name || holder.rows[0].name || holder.rows[0].email).slice(0, 100);
+  // Flutterwave returns no name on the card itself, and its customer name
+  // isn't reliable (the sandbox fills in the merchant's), so use our own
+  // profile name.
+  const cardholderName = (holder.rows[0].name || verified.customer?.name || holder.rows[0].email).slice(0, 100);
 
   const inserted = await client.query(
     `INSERT INTO cards (
@@ -94,7 +97,7 @@ async function attachLinkedCard(client, link, verified, txn) {
       expiry.month,
       expiry.year,
       verified.customer?.email || holder.rows[0].email,
-      card.issuer?.slice(0, 100) ?? null,
+      card.issuer?.trim().replace(/s+/g, " ").slice(0, 100) || null,
     ],
   );
   const cardId = inserted.rows[0].card_id;

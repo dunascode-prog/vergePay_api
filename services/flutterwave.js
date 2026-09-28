@@ -90,9 +90,34 @@ export function verifyByReference(txRef) {
   return request("GET", `/transactions/verify_by_reference?tx_ref=${encodeURIComponent(txRef)}`);
 }
 
-// Charges a saved card token. Flutterwave answers "pending" and the outcome
-// is confirmed by verifying or by the charge.completed webhook.
+// Where Flutterwave sends the customer after approving a charge. For saved
+// card charges it must be a public https address: Flutterwave rejects
+// localhost ("Please enter a valid redirect url"), even though hosted
+// checkout accepts it. In local development use a tunnel's URL.
+export function chargeRedirectUrl() {
+  const url = env.flutterwave.redirectUrl;
+  let host;
+  try {
+    host = new URL(url).hostname;
+  } catch {
+    host = "";
+  }
+  if (!url.startsWith("https://") || ["localhost", "127.0.0.1", "0.0.0.0", "::1", ""].includes(host)) {
+    throw new ServiceUnavailableError({
+      message:
+        "Saved-card charges need FLW_REDIRECT_URL to be a public https address (Flutterwave rejects localhost). In local development, use a tunnel URL.",
+    });
+  }
+  return url;
+}
+
+// Charges a saved card token. Flutterwave answers "pending"; the outcome is
+// confirmed by verifying or by the charge.completed webhook. When the
+// card's bank wants the customer to approve it (3-D Secure), the response
+// carries meta.authorization { mode: "redirect", redirect: <url> }, and the
+// charge stays pending until the customer does.
 export function chargeCardToken({ token, email, amountMinor, currency, txRef, narration }) {
+  const redirectUrl = chargeRedirectUrl();
   return request("POST", "/tokenized-charges", {
     token,
     email,
@@ -101,7 +126,7 @@ export function chargeCardToken({ token, email, amountMinor, currency, txRef, na
     amount: toMajor(amountMinor),
     tx_ref: txRef,
     narration,
-    redirect_url: env.flutterwave.redirectUrl,
+    redirect_url: redirectUrl,
   });
 }
 
