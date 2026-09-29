@@ -26,6 +26,8 @@ const PRELUDE = [
   'const replayed = pm.response.headers.get("Idempotent-Replayed") === "true";',
   "const errorCode = j.error && j.error.code;",
   "const errorMessage = (j.error && j.error.message) || \"\";",
+  // query-string reader: the Postman sandbox has no URL global
+  'const qp = (url, key) => { const m = String(url || "").match(new RegExp("[?&]" + key + "=([^&#]*)")); return m ? decodeURIComponent(m[1].replace(/\\+/g, " ")) : null; };',
 ];
 
 // TOTP (RFC 6238) in the Postman sandbox, so 2FA steps need no phone. (The
@@ -96,6 +98,8 @@ const expected = []; // { collection, folder, rows: [...] }
 //   idem         "new" | "same" | "new:<var>" | "same:<var>"  Idempotency-Key handling
 //   internal     true = send X-Internal-Api-Key; "wrong" = send a wrong one
 //   totp         true = generate {{totpCode}} first (2FA steps)
+//   rawUrl       a whole URL from a variable (e.g. "{{authorizationUrl}}") instead of base + path
+//   noRedirect   don't follow redirects, so the redirect itself can be checked
 //   body, raw, headers, pre, tests, description, base
 function req(name, method, path, opts = {}) {
   const {
@@ -112,6 +116,8 @@ function req(name, method, path, opts = {}) {
     tests = [],
     description = "",
     base = "{{baseUrl}}",
+    rawUrl,
+    noRedirect,
   } = opts;
   if (status === undefined) throw new Error(`${name}: every request needs an expected status`);
 
@@ -138,7 +144,7 @@ function req(name, method, path, opts = {}) {
     ...tests,
   ];
 
-  const request = { method, header, url: buildUrl(base, path) };
+  const request = { method, header, url: rawUrl ?? buildUrl(base, path) };
   const bodyText = raw ?? (body !== undefined ? rawBody(body) : undefined);
   if (bodyText !== undefined) request.body = { mode: "raw", raw: bodyText, options: { raw: { language: "json" } } };
 
@@ -148,9 +154,10 @@ function req(name, method, path, opts = {}) {
   request.description = [description, expectText].filter(Boolean).join("\n\n");
 
   const item = { name, event: [], request };
+  if (noRedirect) item.protocolProfileBehavior = { followRedirects: false };
   if (preScript.length) item.event.push({ listen: "prerequest", script: { type: "text/javascript", exec: preScript } });
   item.event.push({ listen: "test", script: { type: "text/javascript", exec: testScript } });
-  item._doc = { name, method, path, status: statusList.join(" / "), checks: checkLabels, description };
+  item._doc = { name, method, path: rawUrl ?? path, status: statusList.join(" / "), checks: checkLabels, description };
   return item;
 }
 
@@ -159,11 +166,14 @@ const standIn = (name, path, body, opts = {}) =>
   req(name, "POST", path, { base: "{{standInUrl}}", body, status: 200, ...opts });
 
 // Several requests at once, to prove the API's row locks. Fired from a test
-// script with pm.sendRequest, which shares the session cookie jar.
-function concurrently(name, { count, method, path, bodyExpr, headersExpr = "{}", expectExpr, label, description }) {
-  return req(name, "GET", "/users/me", {
+// script with pm.sendRequest, which shares the session cookie jar. The probe
+// is the request that carries that script: by default a harmless GET that
+// needs a session; override it where there may be no session yet.
+function concurrently(name, { count, method, path, bodyExpr, headersExpr = "{}", expectExpr, label, description, probe = { method: "GET", path: "/users/me" } }) {
+  return req(name, probe.method, probe.path, {
+    body: probe.body,
     status: 200,
-    description: `${description}\n\nThe request itself is a harmless GET; its test script fires ${count} ${method} ${path} requests at the same moment and counts the outcomes.`,
+    description: `${description}\n\nThe request itself is a harmless ${probe.method} ${probe.path}; its test script fires ${count} ${method} ${path} requests at the same moment and counts the outcomes.`,
     extraCheckLabels: [label],
     tests: [
       `const url = pm.variables.replaceIn(${JSON.stringify(`{{baseUrl}}${path}`)});`,
@@ -305,6 +315,17 @@ const auth = [
   req("Sign up - weak password", "POST", "/auth/signup", {
     body: { username: "weak_pw_user", email: "weak@vergepay.dev", password: "password123", confirmPassword: "password123" },
     status: 422,
+  }),
+  concurrently("Concurrent: sign in twice at the same moment", {
+    count: 2,
+    method: "POST",
+    path: "/auth/signin",
+    bodyExpr: '{ email: pm.collectionVariables.get("toluEmail"), password: pm.collectionVariables.get("toluPassword") }',
+    expectExpr: "codes.every((c) => c === 200)",
+    label: "both succeed (two sessions issued in the same second never collide)",
+    // signing up just cleared the session, so the probe is a sign-in itself
+    probe: { method: "POST", path: "/auth/signin", body: { email: "{{toluEmail}}", password: "{{toluPassword}}" } },
+    description: "Regression check: session tokens used to be identical when issued for the same user in the same second, so the second sign-in failed with a 500. Each token now carries a random id.",
   }),
   req("Sign in (Tolu)", "POST", "/auth/signin", {
     body: { email: "{{toluEmail}}", password: "{{toluPassword}}" },
@@ -1311,6 +1332,238 @@ const cards = [
 ];
 
 // ---------------------------------------------------------------------------
+// 10. Investments (as Ada; Alpaca stand-in; needs the worker running)
+
+const alpacaStandIn = (name, path, body, opts = {}) =>
+  req(name, "POST", path, { base: "{{alpacaUrl}}", body, status: 200, ...opts });
+
+const saveCalls = () =>
+  req("Stand-in: how many positions calls so far", "GET", "/_test/calls?account_number={{brokerageAccount}}", {
+    base: "{{alpacaUrl}}",
+    status: 200,
+    save: [["positionsCallsBefore", "String(j.positions_calls)"]],
+  });
+
+const callsSince = (label, expected) =>
+  req(`Stand-in: ${label}`, "GET", "/_test/calls?account_number={{brokerageAccount}}", {
+    base: "{{alpacaUrl}}",
+    status: 200,
+    checks: [[`${expected} positions call(s) since`, `j.positions_calls - n("positionsCallsBefore") === ${expected}`]],
+  });
+
+// Polls the link until the worker has finished with it, then checks it.
+// The sync runs in the background worker, never in the request that asked for it.
+function waitForLink(name, { until, checks, description }) {
+  return req(name, "GET", "/brokerage-links", {
+    status: 200,
+    description: `${description ?? ""}\n\nPolls the link (up to 30 seconds) until the background worker is done with it.`.trim(),
+    extraCheckLabels: checks.map(([label]) => label),
+    tests: [
+      'const linkId = v("brokerageLinkId");',
+      "const started = Date.now();",
+      "const poll = () => pm.sendRequest({ url: pm.variables.replaceIn(\"{{baseUrl}}/brokerage-links\"), method: \"GET\" }, (err, res) => {",
+      "  const link = (res.json().data || []).find((l) => l.link_id === linkId);",
+      `  const done = link && (${until});`,
+      "  if (!done && Date.now() - started < 30000) return setTimeout(poll, 500);",
+      '  pm.collectionVariables.set("lastLinkState", JSON.stringify(link || null));',
+      ...checks.map(([label, expr]) => `  pm.test(${JSON.stringify(label)}, () => pm.expect(Boolean(link && (${expr})), JSON.stringify(link)).to.be.true);`),
+      "});",
+      "poll();",
+    ],
+  });
+}
+
+const startConnect = (name, opts = {}) =>
+  req(name, "POST", "/brokerage-links", {
+    body: { provider_name: "alpaca", account_id: "{{investmentAccountId}}" },
+    status: 200,
+    save: [["authorizationUrl", "j.authorization_url"], ["oauthState", "j.state"]],
+    ...opts,
+  });
+const approveAtBrokerage = (name = "The user approves on Alpaca (redirects to our callback)") =>
+  req(name, "GET", "", {
+    rawUrl: "{{authorizationUrl}}",
+    noRedirect: true,
+    status: 302,
+    description: "What the user's browser does: open authorization_url, log in and approve on the brokerage's site. The brokerage then redirects to our callback with a one-time code.",
+    save: [["callbackUrl", 'pm.response.headers.get("Location")']],
+    checks: [["redirects to our callback with code and state", '/\\/v1\\/brokerage-links\\/oauth\\/callback\\?/.test(pm.response.headers.get("Location")) && /[?&]state=/.test(pm.response.headers.get("Location"))']],
+  });
+const landOnCallback = (name, { expectStatus = "linked", reason, save = true } = {}) =>
+  req(name, "GET", "", {
+    rawUrl: "{{callbackUrl}}",
+    noRedirect: true,
+    status: 302,
+    description: "Our callback exchanges the code for a token (server to server), stores it in the vault, creates the link, queues the first sync, and redirects the browser back to the app.",
+    save: save ? [["brokerageLinkId", 'qp(pm.response.headers.get("Location"), "link_id") || v("brokerageLinkId")']] : [],
+    checks: [[
+      `back to the app with status=${expectStatus}${reason ? ` (${reason})` : ""}`,
+      `qp(pm.response.headers.get("Location"), "status") === ${JSON.stringify(expectStatus)}${reason ? ` && qp(pm.response.headers.get("Location"), "reason") === ${JSON.stringify(reason)}` : ""}`,
+    ]],
+  });
+const holdingsList = (name, checks) =>
+  req(name, "GET", "/holdings?account_id={{investmentAccountId}}", { status: 200, checks });
+
+const investments = [
+  alpacaStandIn("Stand-in: the next Alpaca login approves (fresh brokerage account)", "/_test/next-authorize", { decision: "approve", account_number: "{{brokerageAccount}}" }, {
+    pre: ['pm.collectionVariables.set("brokerageAccount", "PA3" + Math.random().toString(36).slice(2, 10).toUpperCase());'],
+    description: "Calls the Alpaca stand-in, not the API. If this fails, start it with `npm run alpaca:stand-in`, and start the worker with `npm run worker:with-stand-in`.",
+  }),
+  alpacaStandIn("Stand-in: the brokerage account holds AAPL, VOO, Bitcoin and an option", "/_test/positions", {
+    account_number: "{{brokerageAccount}}",
+    positions: [
+      { symbol: "AAPL", qty: "10", avg_entry_price: "185.2549", current_price: "190.1" },
+      { symbol: "VOO", qty: "2.5", avg_entry_price: "480", current_price: "500.505" },
+      { symbol: "BTCUSD", qty: "0.01234567", avg_entry_price: "60000", current_price: "65000", asset_class: "crypto" },
+      { symbol: "AAPL250117C00200000", qty: "1", avg_entry_price: "2.5", asset_class: "us_option" },
+    ],
+  }),
+  req("Connect without 2FA", "POST", "/brokerage-links", { body: { provider_name: "alpaca" }, status: 403, checks: [["asks for 2FA", 'errorCode === "TWO_FACTOR_REQUIRED"']] }),
+  ...enableTwoFactor(),
+  req("Connect - unsupported provider", "POST", "/brokerage-links", { body: { provider_name: "robinhood" }, status: 422 }),
+  req("Connect - into a current account", "POST", "/brokerage-links", {
+    body: { provider_name: "alpaca", account_id: "{{cardAccount2Id}}" },
+    status: 422,
+    description: "Holdings sit in an investment_wallet account.",
+  }),
+  openAccount("Open an investment wallet", "investmentAccountId", { type: "investment_wallet", currency: "USD" }),
+  startConnect("Start connecting Alpaca", {
+    checks: [
+      ["an Alpaca authorization URL and a state", 'j.authorization_url.startsWith(v("alpacaUrl") + "/oauth/authorize?") && typeof j.state === "string"'],
+      ["asks for the paper account, with our callback", 'qp(j.authorization_url, "env") === "paper" && qp(j.authorization_url, "redirect_uri").endsWith("/v1/brokerage-links/oauth/callback") && qp(j.authorization_url, "state") === j.state']],
+  }),
+  approveAtBrokerage(),
+  landOnCallback("Our callback links the account"),
+  landOnCallback("The same callback again (state already used)", { expectStatus: "failed", reason: "expired_or_used_state", save: false }),
+  req("A callback with a forged state", "GET", "/brokerage-links/oauth/callback?code=x&state=forged", {
+    noRedirect: true,
+    status: 302,
+    checks: [["refused", 'qp(pm.response.headers.get("Location"), "reason") === "expired_or_used_state"']],
+  }),
+  waitForLink("First sync done by the worker", {
+    until: '["succeeded", "failed"].includes(link.last_sync_status)',
+    checks: [
+      ["sync succeeded", 'link.last_sync_status === "succeeded" && Boolean(link.last_synced_at)'],
+      ["brokerage account number masked", 'link.provider_account === "••••" + v("brokerageAccount").slice(-4)'],
+    ],
+  }),
+  req("Links list shows no token material", "GET", "/brokerage-links", {
+    status: 200,
+    checks: [["no vault reference or token anywhere", '!/vault:|oauth_token|access_token/.test(pm.response.text())']],
+  }),
+  holdingsList("Holdings synced from the brokerage", [
+    ["3 holdings; the option is skipped", 'j.data.length === 3 && !j.data.some((h) => h.security.ticker_symbol.startsWith("AAPL2"))'],
+    ["AAPL in cents, rounded half up", 'j.data.some((h) => h.security.ticker_symbol === "AAPL" && h.quantity === "10.000000" && h.average_cost_minor === 18525 && h.current_price_minor === 19010 && h.market_value_minor === 190100)'],
+    ["security nested inline with its name", 'j.data.some((h) => h.security.ticker_symbol === "AAPL" && h.security.company_name === "Apple Inc. Common Stock" && h.security.asset_type === "stock" && h.security.currency_code === "USD")'],
+    ["fractional Bitcoin kept to 6 decimals", 'j.data.some((h) => h.security.ticker_symbol === "BTCUSD" && h.quantity === "0.012346" && h.security.asset_type === "crypto")'],
+    ["biggest position first", 'j.data[0].security.ticker_symbol === "AAPL"'],
+  ], ),
+  req("Holdings: save one id", "GET", "/holdings?account_id={{investmentAccountId}}", {
+    status: 200,
+    save: [["holdingId", 'j.data.find((h) => h.security.ticker_symbol === "VOO").holding_id']],
+  }),
+  req("Get one holding", "GET", "/holdings/{{holdingId}}", { status: 200, checks: [["VOO from Alpaca", 'j.security.ticker_symbol === "VOO" && j.provider_name === "alpaca"']] }),
+  req("An unknown holding", "GET", "/holdings/00000000-0000-4000-8000-000000000000", { status: 404 }),
+  alpacaStandIn("Stand-in: the user sells VOO and buys more AAPL", "/_test/positions", {
+    account_number: "{{brokerageAccount}}",
+    positions: [
+      { symbol: "AAPL", qty: "12", avg_entry_price: "186", current_price: "191" },
+      { symbol: "BTCUSD", qty: "0.01234567", avg_entry_price: "60000", current_price: "64000", asset_class: "crypto" },
+    ],
+  }),
+  req("Sync now", "POST", "/brokerage-links/{{brokerageLinkId}}/sync", {
+    status: 202,
+    description: "202: the sync is queued for the worker. A slow or rate-limited brokerage never holds up this request.",
+    save: [["syncJobId", "j.job_id"], ["syncRequestedAt", "new Date().toISOString()"]],
+    checks: [["queued (or already picked up)", '["queued", "running"].includes(j.sync_status) && j.job_id === "link-" + v("brokerageLinkId")']],
+  }),
+  req("Sync again at once (no duplicate job)", "POST", "/brokerage-links/{{brokerageLinkId}}/sync", {
+    status: 202,
+    checks: [["same job", 'j.job_id === v("syncJobId")']],
+  }),
+  waitForLink("Wait for that sync", {
+    until: 'link.last_sync_status === "succeeded" && new Date(link.last_synced_at) > new Date(v("syncRequestedAt"))',
+    checks: [["succeeded", 'link.last_sync_status === "succeeded"']],
+  }),
+  holdingsList("Sold position removed, the rest updated", [
+    ["2 holdings, AAPL now 12, VOO gone", 'j.data.length === 2 && j.data.find((h) => h.security.ticker_symbol === "AAPL").quantity === "12.000000" && !j.data.some((h) => h.security.ticker_symbol === "VOO")'],
+  ]),
+  saveCalls(),
+  alpacaStandIn("Stand-in: the next two calls hit a rate limit, then an outage", "/_test/fail-next", { account_number: "{{brokerageAccount}}", statuses: [429, 503] }),
+  req("Sync (the brokerage misbehaves)", "POST", "/brokerage-links/{{brokerageLinkId}}/sync", { status: 202, save: [["syncRequestedAt", "new Date().toISOString()"]] }),
+  waitForLink("Retried with backoff, then succeeded", {
+    until: 'link.last_sync_status === "succeeded" && new Date(link.last_synced_at) > new Date(v("syncRequestedAt"))',
+    checks: [["succeeded after retries", 'link.last_sync_status === "succeeded"']],
+  }),
+  callsSince("the worker made 3 attempts", 3),
+  saveCalls(),
+  alpacaStandIn("Stand-in: the next five calls all fail", "/_test/fail-next", { account_number: "{{brokerageAccount}}", statuses: [500, 500, 500, 500, 500] }),
+  req("Sync (the brokerage stays down)", "POST", "/brokerage-links/{{brokerageLinkId}}/sync", { status: 202 }),
+  waitForLink("Gives up after 5 attempts", {
+    until: 'link.last_sync_status === "failed"',
+    checks: [["failed, error recorded, link still active", 'link.last_sync_status === "failed" && /500/.test(link.last_sync_error) && link.link_status === "active"']],
+  }),
+  callsSince("exactly 5 attempts", 5),
+  holdingsList("A failed sync leaves holdings as they were", [["still 2", "j.data.length === 2"]]),
+  req("Dev: make the link overdue and run the scheduler", "POST", "/dev/brokerage/run-scheduler", {
+    status: 202,
+    save: [["syncRequestedAt", "new Date().toISOString()"]],
+    description: "Development only. Queues the same sync-all-links job the scheduler runs every 15 minutes, after making this user's links look overdue.",
+  }),
+  waitForLink("The scheduler synced the overdue link", {
+    until: 'link.last_sync_status === "succeeded" && new Date(link.last_synced_at) > new Date(v("syncRequestedAt"))',
+    checks: [["synced by the scheduled job", 'link.last_sync_status === "succeeded"']],
+  }),
+  saveCalls(),
+  alpacaStandIn("Stand-in: the user revokes our access at Alpaca", "/_test/revoke", { account_number: "{{brokerageAccount}}" }),
+  req("Sync (the token is now refused)", "POST", "/brokerage-links/{{brokerageLinkId}}/sync", { status: 202 }),
+  waitForLink("The link is marked expired", {
+    until: 'link.link_status === "expired"',
+    checks: [["expired, sync failed", 'link.link_status === "expired" && link.last_sync_status === "failed"']],
+  }),
+  callsSince("not retried: 1 attempt", 1),
+  req("Syncing an expired link", "POST", "/brokerage-links/{{brokerageLinkId}}/sync", {
+    status: 409,
+    checks: [["asks to reconnect", "/Reconnect/.test(errorMessage)"]],
+  }),
+  reverify("Reconnecting is 'User + 2FA' too."),
+  startConnect("Reconnect: start again"),
+  approveAtBrokerage("Reconnect: the user approves"),
+  req("Reconnect: our callback reuses the same link", "GET", "", {
+    rawUrl: "{{callbackUrl}}",
+    noRedirect: true,
+    status: 302,
+    checks: [["linked, same link_id", 'qp(pm.response.headers.get("Location"), "status") === "linked" && qp(pm.response.headers.get("Location"), "link_id") === v("brokerageLinkId")']],
+  }),
+  waitForLink("The reconnected link is active and syncs again", {
+    until: 'link.link_status === "active" && link.last_sync_status === "succeeded"',
+    checks: [["active and synced", 'link.link_status === "active" && link.last_sync_status === "succeeded"']],
+  }),
+  alpacaStandIn("Stand-in: the next Alpaca login is denied", "/_test/next-authorize", { decision: "deny" }),
+  startConnect("Start connecting (the user will decline)"),
+  approveAtBrokerage("The user declines on Alpaca"),
+  landOnCallback("Back to the app: failed, access_denied", { expectStatus: "failed", reason: "access_denied", save: false }),
+  alpacaStandIn("Stand-in: logins approve again", "/_test/next-authorize", { decision: "approve", account_number: "{{brokerageAccount}}" }),
+  startConnect("Start connecting (the user will be too slow)"),
+  req("Dev: let the 10 minutes pass", "POST", "/dev/oauth-states/expire", { body: { state: "{{oauthState}}" }, status: 200, description: "Development only. Ages the pending connection past its 10-minute window." }),
+  approveAtBrokerage("The user approves, too late"),
+  landOnCallback("Back to the app: failed, the state expired", { expectStatus: "failed", reason: "expired_or_used_state", save: false }),
+  dropTwoFactorStamp(),
+  req("Disconnect without a recent code", "DELETE", "/brokerage-links/{{brokerageLinkId}}", { status: 403 }),
+  reverify("Disconnecting is 'User + 2FA'."),
+  req("Disconnect", "DELETE", "/brokerage-links/{{brokerageLinkId}}", {
+    status: 200,
+    description: "Destroys the stored token (nothing is left to decrypt) and removes the holdings that came from this link.",
+    checks: [["revoked", 'j.link_status === "revoked"']],
+  }),
+  holdingsList("Its holdings are gone", [["none", "j.data.length === 0"]]),
+  req("Gone from the links list", "GET", "/brokerage-links", { status: 200, checks: [["not listed", '!j.data.some((l) => l.link_id === v("brokerageLinkId"))']] }),
+  req("Disconnect twice", "DELETE", "/brokerage-links/{{brokerageLinkId}}", { status: 409 }),
+  req("Sync a disconnected link", "POST", "/brokerage-links/{{brokerageLinkId}}/sync", { status: 409 }),
+  req("2FA off again", "DELETE", "/auth/2fa", { status: 200 }),
+];
+
+// ---------------------------------------------------------------------------
 // 9. Wrap-up
 
 const wrapUp = [
@@ -1401,6 +1654,7 @@ const baseVariables = [
   { key: "adaPassword", value: "Signin$Ada7741" },
   { key: "internalApiKey", value: "", description: "INTERNAL_API_KEY from .env (the back-office key). npm run test:postman fills it in." },
   { key: "flwSecretHash", value: "stand-in-secret-hash", description: "The webhook secret hash. Matches npm run start:with-stand-in." },
+  { key: "alpacaUrl", value: "http://localhost:9998", description: "The Alpaca stand-in (npm run alpaca:stand-in)." },
 ];
 
 function folder(name, description, items) {
@@ -1418,7 +1672,7 @@ function collection(name, description, folders) {
 
 const main = collection(
   "VergePay API - full test suite",
-  "Every end-to-end test of vergepay_api, including the edge cases. Run the folders in order (Collection Runner, or `npm run test:postman`). Needs the API started with `npm run start:with-stand-in` and the Flutterwave stand-in with `npm run flw:stand-in`. Always call http://localhost (the cookie jar is per host). Expected results: postman/EXPECTED_RESULTS.md.",
+  "Every end-to-end test of vergepay_api, including the edge cases. Run the folders in order (Collection Runner, or `npm run test:postman`). Needs the two stand-ins (`npm run flw:stand-in`, `npm run alpaca:stand-in`), the API (`npm run start:with-stand-in`) and the worker (`npm run worker:with-stand-in`), with REDIS_URL set. Always call http://localhost (the cookie jar is per host). Expected results: postman/EXPECTED_RESULTS.md.",
   [
     folder("0. Setup", "Resets the two test users so the suite can run from a clean state.", setup),
     folder("1. Auth", "Sign-up, sign-in, one-time refresh tokens. As Tolu.", auth),
@@ -1429,7 +1683,8 @@ const main = collection(
     folder("6. Invoices", "Tolu bills Ada: validation, visibility, payment, cancellation, overdue, the close guard, a concurrent payment race, and full refunds (including a concurrent refund race).", invoices),
     folder("7. Two-factor authentication", "TOTP setup, the sign-in challenge, one-time codes and the recent-confirmation rule. As Ada. Codes are computed in Postman.", twoFactor),
     folder("8. Cards, webhook and bank transfers", "Card linking through hosted checkout, the signed webhook (v3 and v4), saved-card charges (pending, instant, 3-D Secure, declined, tampered, failed), spending controls, block/unblock/remove, and bank-transfer funding. As Ada, against the Flutterwave stand-in.", cards),
-    folder("9. Wrap-up", "The 2FA brute-force limit, resetting the test users, and logout.", wrapUp),
+    folder("9. Investments", "Connecting an Alpaca brokerage account with OAuth (approve, deny, replayed, forged and expired states, reconnect), background syncs by the BullMQ worker (retries with backoff, giving up, the scheduler, a revoked token), the synced holdings, and disconnecting. As Ada, against the Alpaca stand-in; needs the worker running.", investments),
+    folder("10. Wrap-up", "The 2FA brute-force limit, resetting the test users, and logout.", wrapUp),
   ],
 );
 
@@ -1478,13 +1733,14 @@ Generated by \`npm run postman:build\` from the same definitions as the collecti
 
 ## How to run it
 
-1. Terminal 1: \`npm run flw:stand-in\` (the Flutterwave stand-in on :9999)
-2. Terminal 2: \`npm run start:with-stand-in\` (the API on :8000, pointed at the stand-in)
-3. Terminal 3: \`npm run test:postman\` (Newman runs every folder and prints a summary), **or** import \`postman/vergepay-api.postman_collection.json\` into Postman, set the \`internalApiKey\` variable to \`INTERNAL_API_KEY\` from \`.env\`, and run it in the Collection Runner in order.
+1. Terminals 1 and 2: \`npm run flw:stand-in\` and \`npm run alpaca:stand-in\` (the Flutterwave and Alpaca stand-ins on :9999 and :9998)
+2. Terminal 3: \`npm run start:with-stand-in\` (the API on :8000, pointed at the stand-ins)
+3. Terminal 4: \`npm run worker:with-stand-in\` (the background worker; needs \`REDIS_URL\` in \`.env\`)
+4. Terminal 5: \`npm run test:postman\` (Newman runs every folder and prints a summary), **or** import \`postman/vergepay-api.postman_collection.json\` into Postman, set the \`internalApiKey\` variable to \`INTERNAL_API_KEY\` from \`.env\`, and run it in the Collection Runner in order.
 
 Notes:
 - Use \`http://localhost\`, not \`127.0.0.1\`: Postman's cookie jar is per host.
-- The suite resets \`tolu_login\` and \`ada_login\` at the start and end (folder 0 and 9), so it can be re-run straight away.
+- The suite resets \`tolu_login\` and \`ada_login\` at the start and end (folders 0 and 10), so it can be re-run straight away.
 - Requests marked **Dev:** use development-only helpers (\`/v1/dev/*\`) that don't exist in production.
 - Requests marked **Stand-in:** call the Flutterwave stand-in's test controls, not the API.
 - "Concurrent:" requests fire several requests at the same moment from their test script to prove the row locks.

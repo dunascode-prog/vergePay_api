@@ -38,6 +38,11 @@
       "key": "flwSecretHash",
       "value": "stand-in-secret-hash",
       "description": "The webhook secret hash. Matches npm run start:with-stand-in."
+    },
+    {
+      "key": "alpacaUrl",
+      "value": "http://localhost:9998",
+      "description": "The Alpaca stand-in (npm run alpaca:stand-in)."
     }
   ],
   "item": [
@@ -59,6 +64,7 @@
                   "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
                   "const errorCode = j.error && j.error.code;",
                   "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
                   "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
                   "pm.test(\"session cookies set\", () => pm.expect(pm.cookies.has(\"access_token\") && pm.cookies.has(\"refresh_token\"), \"session cookies set\").to.be.true);"
                 ]
@@ -109,6 +115,7 @@
                   "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
                   "const errorCode = j.error && j.error.code;",
                   "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
                   "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
                 ]
               }
@@ -159,6 +166,7 @@
                   "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
                   "const errorCode = j.error && j.error.code;",
                   "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
                   "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
                   "pm.test(\"verified\", () => pm.expect(j.kyc_status === \"verified\", \"verified\").to.be.true);"
                 ]
@@ -196,6 +204,7 @@
                   "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
                   "const errorCode = j.error && j.error.code;",
                   "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
                   "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
                   "pm.test(\"returns a base32 secret and otpauth URI\", () => pm.expect(/^[A-Z2-7]{32}$/.test(j.secret) && j.otpauth_uri.startsWith(\"otpauth://totp/\"), \"returns a base32 secret and otpauth URI\").to.be.true);",
                   "try { pm.collectionVariables.set(\"totpSecret\", j.secret); } catch (e) {}",
@@ -269,6 +278,7 @@
                   "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
                   "const errorCode = j.error && j.error.code;",
                   "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
                   "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
                   "pm.test(\"2FA confirmed\", () => pm.expect(j.two_factor_enabled === true, \"2FA confirmed\").to.be.true);"
                 ]
@@ -329,6 +339,7 @@
                   "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
                   "const errorCode = j.error && j.error.code;",
                   "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
                   "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
                   "try { pm.collectionVariables.set(\"liveAccountId\", j.account_id); } catch (e) {}"
                 ]
@@ -391,6 +402,7 @@
                   "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
                   "const errorCode = j.error && j.error.code;",
                   "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
                   "pm.test(\"status is 202\", () => pm.response.to.have.status(202));",
                   "pm.test(\"a real Flutterwave checkout URL\", () => pm.expect(String(j.checkout_url).startsWith(\"https://\"), \"a real Flutterwave checkout URL\").to.be.true);",
                   "try { pm.collectionVariables.set(\"liveLinkTxnId\", j.transaction_id); } catch (e) {}",
@@ -447,6 +459,7 @@
                   "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
                   "const errorCode = j.error && j.error.code;",
                   "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
                   "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
                   "pm.test(\"settled and card linked\", () => pm.expect(j.status === \"settled\" && j.card_link_status === \"linked\", \"settled and card linked\").to.be.true);",
                   "try { pm.collectionVariables.set(\"liveCardId\", j.linked_card_id); } catch (e) {}"
@@ -485,6 +498,7 @@
                   "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
                   "const errorCode = j.error && j.error.code;",
                   "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
                   "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
                   "pm.test(\"Mastercard 553188 •••• 2950\", () => pm.expect(j.pan_bin === \"553188\" && j.pan_last_four === \"2950\", \"Mastercard 553188 •••• 2950\").to.be.true);"
                 ]
@@ -530,6 +544,7 @@
                   "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
                   "const errorCode = j.error && j.error.code;",
                   "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
                   "pm.test(\"status is 202\", () => pm.response.to.have.status(202));",
                   "pm.test(\"pending\", () => pm.expect(j.status === \"pending\" || j.status === \"settled\", \"pending\").to.be.true);",
                   "try { pm.collectionVariables.set(\"liveChargeId\", j.transaction_id); } catch (e) {}",
@@ -587,6 +602,7 @@
                   "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
                   "const errorCode = j.error && j.error.code;",
                   "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
                   "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
                   "pm.test(\"settled\", () => pm.expect(j.status === \"settled\", \"settled\").to.be.true);"
                 ]
@@ -624,6 +640,7 @@
                   "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
                   "const errorCode = j.error && j.error.code;",
                   "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
                   "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
                   "pm.test(\"balance is 30000\", () => pm.expect(j.balance_minor === 30000, \"balance is 30000\").to.be.true);"
                 ]
@@ -660,6 +677,7 @@
                   "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
                   "const errorCode = j.error && j.error.code;",
                   "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
                   "pm.test(\"status is one of 200/201\", () => pm.expect([200,201]).to.include(pm.response.code));"
                 ]
               }
@@ -744,6 +762,7 @@
                   "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
                   "const errorCode = j.error && j.error.code;",
                   "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
                   "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
                   "pm.test(\"confirmed\", () => pm.expect(j.two_factor_enabled === true, \"confirmed\").to.be.true);"
                 ]
@@ -795,6 +814,7 @@
                   "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
                   "const errorCode = j.error && j.error.code;",
                   "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
                   "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
                 ]
               }

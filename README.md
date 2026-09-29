@@ -6,7 +6,7 @@
 ![Express](https://img.shields.io/badge/Express-5-000000?logo=express&logoColor=white)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-17-4169E1?logo=postgresql&logoColor=white)
 ![Flutterwave](https://img.shields.io/badge/Payments-Flutterwave-F5A623)
-![Tests](https://img.shields.io/badge/Postman_suite-548%2F548_passing-2EA44F?logo=postman&logoColor=white)
+![Tests](https://img.shields.io/badge/Postman_suite-659%2F659_passing-2EA44F?logo=postman&logoColor=white)
 
 Built by **[Seyitan Omodara](https://github.com/dunascode-prog)** · Frontend: [vergePay_ui](https://github.com/dunascode-prog/vergePay_ui)
 
@@ -17,11 +17,12 @@ Built by **[Seyitan Omodara](https://github.com/dunascode-prog)** · Frontend: [
 | | |
 |---|---|
 | **What it is** | A REST API for money: open accounts, move money, lend, invoice, and fund accounts by card or bank transfer |
-| **Endpoints** | 49, across auth, accounts, transactions, loans, invoices, cards, webhooks and back office |
+| **Endpoints** | 56, across auth, accounts, transactions, loans, invoices, cards, investments, webhooks and back office |
 | **Money model** | Double-entry ledger in integer minor units (kobo). Balances are cached, but the ledger is the truth |
 | **Payments** | Flutterwave v3 hosted checkout, card tokenization, 3-D Secure and permanent virtual accounts, verified on the real sandbox |
+| **Investments** | Alpaca brokerage connected with OAuth 2.0; holdings synced by a BullMQ worker on Redis, with retries, backoff and a schedule |
 | **Security** | TOTP 2FA built from the RFC, HttpOnly cookie sessions with one-time refresh tokens, encrypted secrets, PCI-safe card handling |
-| **Testing** | 342-request Postman suite with **548 assertions**, including concurrency races and forged-webhook attacks, all passing |
+| **Testing** | 409-request Postman suite with **659 assertions**, including concurrency races, forged-webhook and OAuth attacks, and background-job retries, all passing |
 
 ---
 
@@ -66,6 +67,15 @@ TOTP two-factor authentication ([`utils/totp.js`](utils/totp.js)) is implemented
 - Sensitive actions (adding or removing a card, unblocking, changing spending limits, turning 2FA off) require a code confirmed in the **last 5 minutes**.
 - Brute force is cut off after 5 wrong codes per 15 minutes.
 
+### Background jobs and a brokerage behind OAuth
+Investment holdings are synced from a user's **Alpaca** brokerage account by a **BullMQ worker on Redis** ([`worker.js`](worker.js), [`services/brokerageSync.js`](services/brokerageSync.js)), never inside an HTTP request, so a slow or rate-limited brokerage can't hold up the API.
+- **Connecting is real OAuth 2.0:** the user logs in on the brokerage's own site, and our server only ever sees a one-time code.
+  - The `state` that protects the callback is single use, expires in 10 minutes, and is stored only as a hash.
+  - The access token lives **encrypted in a vault table**; the link row holds only a reference ([`services/vault.js`](services/vault.js)).
+- **Retries that know what's worth retrying:** rate limits and outages are retried with exponential backoff, up to 5 attempts. A refused token isn't retried at all; the link is marked `expired` for the user to reconnect.
+- **Idempotent and ordered:** one job id per link means asking again while a sync is queued returns the same job. A database advisory lock stops a manual sync and a scheduled one from overlapping. Every sync upserts the latest state, and positions the user has sold are removed.
+- **A scheduler** re-syncs every link that's due, every 15 minutes, with exactly one schedule no matter how many workers run.
+
 ### Loan maths that adds up to the kobo
 Amortization ([`services/amortization.js`](services/amortization.js)) rounds the exact schedule's *cumulative* principal rather than the monthly payment. The naive approach (round the payment, carry the error) visibly drifts on long, small loans, and can pay a loan off early or produce negative principal. The final algorithm was property-tested across **21,681 amount/rate/term combinations**: principal always sums exactly, nothing is ever negative, and every installment is within 2 kobo of the level payment.
 
@@ -82,7 +92,7 @@ flowchart LR
     subgraph API["VergePay API (Express 5)"]
         direction TB
         MW["Middleware<br/>auth · 2FA · idempotency · rate limits · validation (zod)"]
-        C["Controllers<br/>accounts · transfers · loans · invoices · cards · webhooks"]
+        C["Controllers<br/>accounts · transfers · loans · invoices · cards · investments · webhooks"]
         L["Ledger service<br/>postTransaction · settle · fail"]
         P["Processor service<br/>verify-before-credit"]
         MW --> C --> L
@@ -90,7 +100,11 @@ flowchart LR
     end
 
     API -->|"verify · charge · virtual accounts"| FLW
+    API -->|"queue sync jobs"| Q[("Redis<br/>(BullMQ)")]
+    Q --> W["Worker<br/>brokerage sync · retries · schedule"]
+    W -->|"OAuth token from the vault"| ALP["Alpaca"]
     L --> DB[("PostgreSQL<br/>(Supabase)")]
+    W --> DB
 ```
 
 ### How a saved-card top-up works
@@ -205,6 +219,19 @@ The full designs are in [`documentation/`](documentation/): the API design (`Fin
 | POST | `/v1/webhooks/payment-processor` | Signed Flutterwave events: card payments, bank deposits, chargebacks |
 </details>
 
+<details>
+<summary><b>Investments</b>: connect a brokerage with OAuth, background holdings sync</summary>
+
+| Method | Endpoint | |
+|---|---|---|
+| POST | `/v1/brokerage-links` | Start connecting Alpaca: returns the brokerage's authorization URL and a single-use state (needs recent 2FA) |
+| GET | `/v1/brokerage-links/oauth/callback` | The brokerage redirects here: exchanges the code for a token, vaults it, links the account, queues the first sync |
+| GET | `/v1/brokerage-links` | Links with their sync status. No token material, ever |
+| POST | `/v1/brokerage-links/:id/sync` | `202`: queue a sync for the worker. Asking twice returns the same job |
+| DELETE | `/v1/brokerage-links/:id` | Disconnect: destroy the token, remove its holdings (needs recent 2FA) |
+| GET | `/v1/holdings` · `/:id` | Positions with the security nested inline: quantity, average cost, price, value, P/L |
+</details>
+
 ---
 
 ## Security at a glance
@@ -212,7 +239,7 @@ The full designs are in [`documentation/`](documentation/): the API design (`Fin
 - **Sessions:** short-lived access JWTs and one-time refresh tokens in HttpOnly, SameSite=Strict cookies. Only a SHA-256 hash of each refresh token is stored.
 - **Money actions:** most are KYC-gated (a borrower can always repay), all are rate-limited per user, and they're 2FA-gated where the API design calls for it.
 - **Ownership:** another user's resource is a `404`, not a `403`, so ids can't be probed.
-- **Secrets at rest:** TOTP secrets are AES-256-GCM encrypted. The BVN used to create a virtual account is passed straight through and never stored. Card numbers never touch the server.
+- **Secrets at rest:** TOTP secrets and brokerage OAuth tokens are AES-256-GCM encrypted, each with its own key; tokens live in a vault table, and links hold only a reference. The BVN used to create a virtual account is passed straight through and never stored. Card numbers never touch the server.
 - **Errors:** validation errors name the field. Server errors never leak SQL or parser text; the detail stays in the logs.
 - **Audit trail:** status changes to accounts, loans, invoices and cards are written to `audit_logs` in the same DB transaction as the change.
 
@@ -220,23 +247,30 @@ The full designs are in [`documentation/`](documentation/): the API design (`Fin
 
 ## Testing
 
-The whole API is exercised by a Postman suite, [`postman/vergepay-api.postman_collection.json`](postman/vergepay-api.postman_collection.json): **342 requests and 548 assertions**, grouped into 10 folders from sign-up to card removal. It isn't just happy paths:
+The whole API is exercised by a Postman suite, [`postman/vergepay-api.postman_collection.json`](postman/vergepay-api.postman_collection.json): **409 requests and 659 assertions**, grouped into 11 folders from sign-up to brokerage disconnection. It isn't just happy paths:
 
 - **Every edge case:** validation, wrong owner, wrong state (`409`), insufficient funds, replayed keys, and retries after a simulated crash.
-- **Races:** simultaneous payments, refunds and repayments, fired at the same instant from test scripts.
-- **Attacks:** forged, unsigned and tampered webhooks; a client-supplied card token; 2FA brute force; reused 2FA codes and refresh tokens.
-- **Payment outcomes on demand:** a local Flutterwave stand-in ([`postman/flutterwave-stand-in.mjs`](postman/flutterwave-stand-in.mjs)) produces declines, 3-D Secure, tampered amounts and bank deposits.
+- **Races:** simultaneous payments, refunds, repayments and sign-ins, fired at the same instant from test scripts.
+- **Attacks:** forged, unsigned and tampered webhooks; a client-supplied card token; replayed, forged and expired OAuth states; 2FA brute force; reused 2FA codes and refresh tokens.
+- **Provider behaviour on demand:** local stand-ins for Flutterwave and Alpaca ([`postman/flutterwave-stand-in.mjs`](postman/flutterwave-stand-in.mjs), [`postman/alpaca-stand-in.mjs`](postman/alpaca-stand-in.mjs)) produce declines, 3-D Secure, tampered amounts, bank deposits, rate limits, outages and revoked tokens.
+- **The background worker:** each brokerage sync is watched until it finishes, including retries with backoff, giving up after 5 attempts, and the scheduler.
 - **Ledger invariants** checked across the database after each money-moving folder.
 
 Every request's expected status and checks are listed in **[`postman/EXPECTED_RESULTS.md`](postman/EXPECTED_RESULTS.md)**, generated from the same source as the collection. A second collection runs the real Flutterwave sandbox end to end.
 
 ```bash
 npm run flw:stand-in           # terminal 1: Flutterwave stand-in on :9999
-npm run start:with-stand-in    # terminal 2: the API, pointed at the stand-in
-npm run test:postman           # terminal 3: runs all 342 requests with Newman
+npm run alpaca:stand-in        # terminal 2: Alpaca stand-in on :9998
+npm run start:with-stand-in    # terminal 3: the API, pointed at the stand-ins
+npm run worker:with-stand-in   # terminal 4: the background worker (needs REDIS_URL)
+npm run test:postman           # terminal 5: runs all 409 requests with Newman
 ```
 
-Writing the suite also caught real bugs, which were then fixed: malformed JSON returned `500` instead of `400`, server errors echoed internal messages, and a regex that had lost its backslash was mangling card issuer names.
+Writing the suite also caught real bugs, which were then fixed:
+- malformed JSON returned `500` instead of `400`
+- server errors echoed internal messages
+- a regex that had lost its backslash was mangling card issuer names
+- two sessions issued for one user in the same second were identical, so the second sign-in failed
 
 ---
 
@@ -250,7 +284,8 @@ cd vergePay_api
 npm install
 cp .env.example .env    # or create .env with the variables below
 npm run db:init         # applies every migration and seed; safe to re-run
-npm run start-dev       # http://localhost:8000
+npm run start-dev       # the API on http://localhost:8000
+npm run worker          # the background worker (brokerage syncs), in another terminal
 ```
 
 | Variable | Purpose |
@@ -264,8 +299,12 @@ npm run start-dev       # http://localhost:8000
 | `FLW_SECRET_KEY`, `FLW_PUBLIC_KEY` | Flutterwave v3 keys (use test keys: `FLWSECK_TEST-…`) |
 | `FLW_SECRET_HASH` | The webhook secret hash set in the Flutterwave dashboard |
 | `FLW_REDIRECT_URL` | Where checkout returns the customer; must be public `https` for saved-card charges |
+| `REDIS_URL` | Redis for the job queue, e.g. a free [Upstash](https://upstash.com) `rediss://` URL |
+| `VAULT_ENCRYPTION_KEY` | 64 hex characters; encrypts brokerage tokens in the vault |
+| `ALPACA_CLIENT_ID`, `ALPACA_CLIENT_SECRET` | From your Alpaca OAuth app (Connect → My Developed Apps) |
+| `ALPACA_REDIRECT_URI` | Must match the app's redirect URI, e.g. `http://localhost:8000/v1/brokerage-links/oauth/callback` |
 
-Card and bank-transfer endpoints answer `503` until the Flutterwave keys are set; everything else works without them. Development-only helpers (`/v1/dev/*`, for test top-ups and suite resets) are never mounted when `NODE_ENV=production`.
+Card and bank-transfer endpoints answer `503` until the Flutterwave keys are set, and investments until the Alpaca keys and Redis are set; everything else works without them. Development-only helpers (`/v1/dev/*`, for test top-ups and suite resets) are never mounted when `NODE_ENV=production`.
 
 ---
 
@@ -273,12 +312,14 @@ Card and bank-transfer endpoints answer `503` until the Flutterwave keys are set
 
 ```
 vergePay_api/
-├── controllers/     request handlers: accounts, transactions, loans, invoices, cards, webhooks, 2FA
-├── services/        ledger.js (money posting), amortization.js, flutterwave.js, processorPayments.js
+├── controllers/     request handlers: accounts, transactions, loans, invoices, cards, investments, webhooks, 2FA
+├── services/        ledger.js (money posting), amortization.js, flutterwave.js, processorPayments.js,
+│                    alpaca.js, brokerageSync.js, queue.js (BullMQ), vault.js
+├── worker.js        the background worker (npm run worker)
 ├── routes/          Express routers, one per resource
 ├── utils/           idempotency, rate limits, TOTP, encryption, sessions, pagination, validation
 ├── db/              connection, transactions helper, migrations and seeds (npm run db:init)
-├── postman/         the test suite, expected results, Flutterwave stand-in and runners
+├── postman/         the test suite, expected results, Flutterwave and Alpaca stand-ins, runners
 ├── documentation/   API design, data model and diagrams
 ├── app.js · server.js · env.js · logger.js
 ```
@@ -293,17 +334,18 @@ vergePay_api/
 - **"Overdue" is computed, not stored**, in the billed user's timezone, so no background job is needed and it can't go stale.
 - **Back-office calls use a shared internal key for now.** Staff accounts with roles are the next stage (see the roadmap). The key is compared in constant time and scopes its own idempotency keys.
 - **Flutterwave v3, not v4.** v3 is Flutterwave's supported API, and v4 was still in beta when this was built. The webhook handler already accepts v4 signatures.
+- **Alpaca for investments, in USD.** No Nigerian brokerage offers self-serve OAuth for connecting an existing account; the local platforms (Bamboo, Trove, Risevest) are partner-only APIs that open new accounts. Alpaca's paper accounts match the OAuth design exactly, at the cost of US securities in USD.
 
 ---
 
 ## Roadmap
 
-Built so far: auth and 2FA, accounts, the ledger and transfers, loans, invoices and refunds, cards and bank-transfer funding. Next:
+Built so far: auth and 2FA, accounts, the ledger and transfers, loans, invoices and refunds, cards and bank-transfer funding, and investments with a background brokerage sync. Next:
 
 - [ ] Staff accounts with roles for the back office, replacing the internal key; KYC review and audit-log search
 - [ ] Automated reconciliation against Flutterwave settlement reports, and chargeback handling
 - [ ] Error responses in RFC 9457 `application/problem+json`
-- [ ] Investments and brokerage sync (a queued background job)
+- [ ] NGX (Nigerian) stocks through a local brokerage partner, and NGN valuation of USD holdings
 - [ ] Loan defaults and late fees; partial and early repayment
 - [ ] AI-assisted cash-flow insights and open-banking account linking
 - [ ] Wire the [vergePay_ui](https://github.com/dunascode-prog/vergePay_ui) dashboard to these endpoints (2FA screens, cards, the checkout return page)

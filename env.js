@@ -51,6 +51,36 @@ const env = {
     model: process.env.OLLAMA_MODEL || "claude-sonnet-4-6",
   },
   corsOrigin: process.env.CORS_ORIGIN || "http://localhost:3000",
+  // 64 hex characters; encrypts third-party tokens in the vault (services/vault.js)
+  vaultEncryptionKey: process.env.VAULT_ENCRYPTION_KEY,
+  // Redis for the BullMQ job queue (services/queue.js), e.g. an Upstash rediss:// URL
+  redisUrl: process.env.REDIS_URL,
+  // Alpaca brokerage (services/alpaca.js). Off until the client id, secret
+  // and redirect URI are set.
+  alpaca: {
+    clientId: process.env.ALPACA_CLIENT_ID,
+    clientSecret: process.env.ALPACA_CLIENT_SECRET,
+    // must match the app's redirect URI in the Alpaca dashboard
+    redirectUri:
+      process.env.ALPACA_REDIRECT_URI ||
+      `http://localhost:${parseInt(process.env.PORT, 10) || 4000}/v1/brokerage-links/oauth/callback`,
+    environment: process.env.ALPACA_ENV || "paper",
+    oauthUrl: process.env.ALPACA_OAUTH_URL || "https://app.alpaca.markets",
+    apiUrl: process.env.ALPACA_API_URL || "https://api.alpaca.markets",
+    tradingUrl:
+      process.env.ALPACA_TRADING_URL ||
+      ((process.env.ALPACA_ENV || "paper") === "live" ? "https://api.alpaca.markets" : "https://paper-api.alpaca.markets"),
+  },
+  brokerage: {
+    // where the OAuth callback sends the browser afterwards (a UI page)
+    returnUrl:
+      process.env.BROKERAGE_RETURN_URL ||
+      `${process.env.CORS_ORIGIN || "http://localhost:3000"}/dashboard/investments/linked`,
+    // how often the scheduler re-syncs every active link
+    syncIntervalMs: parseInt(process.env.BROKERAGE_SYNC_INTERVAL_MS, 10) || 15 * 60 * 1000,
+    // first retry delay; each retry doubles it
+    retryDelayMs: parseInt(process.env.BROKERAGE_RETRY_DELAY_MS, 10) || 5000,
+  },
   // shared secret for back-office callers (utils/internalAuth.js); unset
   // disables those endpoints
   internalApiKey: process.env.INTERNAL_API_KEY,
