@@ -53,8 +53,10 @@ const env = {
   corsOrigin: process.env.CORS_ORIGIN || "http://localhost:3000",
   // 64 hex characters; encrypts third-party tokens in the vault (services/vault.js)
   vaultEncryptionKey: process.env.VAULT_ENCRYPTION_KEY,
-  // Redis for the BullMQ job queue (services/queue.js), e.g. an Upstash rediss:// URL
-  redisUrl: process.env.REDIS_URL,
+  // Redis for the BullMQ job queue (services/queue.js), e.g. a Redis Cloud
+  // redis:// URL. Redis Cloud's copy button gives the whole CLI command
+  // ("redis-cli -u redis://..."), so that prefix is tolerated.
+  redisUrl: process.env.REDIS_URL?.trim().replace(/^redis-cli\s+(?:\S+\s+)*?-u\s+/, ""),
   // Alpaca brokerage (services/alpaca.js). Off until the client id, secret
   // and redirect URI are set.
   alpaca: {
@@ -65,6 +67,11 @@ const env = {
       process.env.ALPACA_REDIRECT_URI ||
       `http://localhost:${parseInt(process.env.PORT, 10) || 4000}/v1/brokerage-links/oauth/callback`,
     environment: process.env.ALPACA_ENV || "paper",
+    // Testing only: link every user to the platform's own paper account
+    // (these keys) instead of their own via OAuth. Never on in production.
+    sharedAccount: process.env.ALPACA_SHARED_ACCOUNT === "true" && process.env.NODE_ENV !== "production",
+    paperKeyId: process.env.ALPACA_PAPER_KEY_ID,
+    paperSecret: process.env.ALPACA_PAPER_SECRET,
     oauthUrl: process.env.ALPACA_OAUTH_URL || "https://app.alpaca.markets",
     apiUrl: process.env.ALPACA_API_URL || "https://api.alpaca.markets",
     tradingUrl:

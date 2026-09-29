@@ -17450,9 +17450,9 @@
                   "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
                   "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
                   "pm.test(\"3 holdings; the option is skipped\", () => pm.expect(j.data.length === 3 && !j.data.some((h) => h.security.ticker_symbol.startsWith(\"AAPL2\")), \"3 holdings; the option is skipped\").to.be.true);",
-                  "pm.test(\"AAPL in cents, rounded half up\", () => pm.expect(j.data.some((h) => h.security.ticker_symbol === \"AAPL\" && h.quantity === \"10.000000\" && h.average_cost_minor === 18525 && h.current_price_minor === 19010 && h.market_value_minor === 190100), \"AAPL in cents, rounded half up\").to.be.true);",
+                  "pm.test(\"AAPL in cents, rounded half up\", () => pm.expect(j.data.some((h) => h.security.ticker_symbol === \"AAPL\" && h.quantity === \"10\" && h.average_cost_minor === 18525 && h.current_price_minor === 19010 && h.market_value_minor === 190100), \"AAPL in cents, rounded half up\").to.be.true);",
                   "pm.test(\"security nested inline with its name\", () => pm.expect(j.data.some((h) => h.security.ticker_symbol === \"AAPL\" && h.security.company_name === \"Apple Inc. Common Stock\" && h.security.asset_type === \"stock\" && h.security.currency_code === \"USD\"), \"security nested inline with its name\").to.be.true);",
-                  "pm.test(\"fractional Bitcoin kept to 6 decimals\", () => pm.expect(j.data.some((h) => h.security.ticker_symbol === \"BTCUSD\" && h.quantity === \"0.012346\" && h.security.asset_type === \"crypto\"), \"fractional Bitcoin kept to 6 decimals\").to.be.true);",
+                  "pm.test(\"fractional Bitcoin kept exactly (up to 9 decimals)\", () => pm.expect(j.data.some((h) => h.security.ticker_symbol === \"BTCUSD\" && h.quantity === \"0.01234567\" && h.security.asset_type === \"crypto\"), \"fractional Bitcoin kept exactly (up to 9 decimals)\").to.be.true);",
                   "pm.test(\"biggest position first\", () => pm.expect(j.data[0].security.ticker_symbol === \"AAPL\", \"biggest position first\").to.be.true);"
                 ]
               }
@@ -17476,7 +17476,7 @@
                 }
               ]
             },
-            "description": "**Expect:** 200\n\n**Checks:**\n- 3 holdings; the option is skipped\n- AAPL in cents, rounded half up\n- security nested inline with its name\n- fractional Bitcoin kept to 6 decimals\n- biggest position first"
+            "description": "**Expect:** 200\n\n**Checks:**\n- 3 holdings; the option is skipped\n- AAPL in cents, rounded half up\n- security nested inline with its name\n- fractional Bitcoin kept exactly (up to 9 decimals)\n- biggest position first"
           }
         },
         {
@@ -17783,7 +17783,7 @@
                   "const errorMessage = (j.error && j.error.message) || \"\";",
                   "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
                   "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
-                  "pm.test(\"2 holdings, AAPL now 12, VOO gone\", () => pm.expect(j.data.length === 2 && j.data.find((h) => h.security.ticker_symbol === \"AAPL\").quantity === \"12.000000\" && !j.data.some((h) => h.security.ticker_symbol === \"VOO\"), \"2 holdings, AAPL now 12, VOO gone\").to.be.true);"
+                  "pm.test(\"2 holdings, AAPL now 12, VOO gone\", () => pm.expect(j.data.length === 2 && j.data.find((h) => h.security.ticker_symbol === \"AAPL\").quantity === \"12\" && !j.data.some((h) => h.security.ticker_symbol === \"VOO\"), \"2 holdings, AAPL now 12, VOO gone\").to.be.true);"
                 ]
               }
             }
@@ -18714,7 +18714,70 @@
           }
         },
         {
-          "name": "Reconnect: start again",
+          "name": "Open a second investment wallet (reconnect into it)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"idempotencyKey\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "try { pm.collectionVariables.set(\"investmentAccount2Id\", j.account_id); } catch (e) {}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/accounts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "accounts"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"account_type\": \"investment_wallet\",\n  \"currency_code\": \"USD\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "**Expect:** 201"
+          }
+        },
+        {
+          "name": "Reconnect into the second wallet",
           "event": [
             {
               "listen": "test",
@@ -18754,7 +18817,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"provider_name\": \"alpaca\",\n  \"account_id\": \"{{investmentAccountId}}\"\n}",
+              "raw": "{\n  \"provider_name\": \"alpaca\",\n  \"account_id\": \"{{investmentAccount2Id}}\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -18847,10 +18910,10 @@
                   "const started = Date.now();",
                   "const poll = () => pm.sendRequest({ url: pm.variables.replaceIn(\"{{baseUrl}}/brokerage-links\"), method: \"GET\" }, (err, res) => {",
                   "  const link = (res.json().data || []).find((l) => l.link_id === linkId);",
-                  "  const done = link && (link.link_status === \"active\" && link.last_sync_status === \"succeeded\");",
+                  "  const done = link && (link.link_status === \"active\" && link.last_sync_status === \"succeeded\" && link.account_id === v(\"investmentAccount2Id\"));",
                   "  if (!done && Date.now() - started < 30000) return setTimeout(poll, 500);",
                   "  pm.collectionVariables.set(\"lastLinkState\", JSON.stringify(link || null));",
-                  "  pm.test(\"active and synced\", () => pm.expect(Boolean(link && (link.link_status === \"active\" && link.last_sync_status === \"succeeded\")), JSON.stringify(link)).to.be.true);",
+                  "  pm.test(\"active, synced, now in the second wallet\", () => pm.expect(Boolean(link && (link.link_status === \"active\" && link.last_sync_status === \"succeeded\" && link.account_id === v(\"investmentAccount2Id\"))), JSON.stringify(link)).to.be.true);",
                   "});",
                   "poll();"
                 ]
@@ -18869,7 +18932,91 @@
                 "brokerage-links"
               ]
             },
-            "description": "Polls the link (up to 30 seconds) until the background worker is done with it.\n\n**Expect:** 200\n\n**Checks:**\n- active and synced"
+            "description": "Polls the link (up to 30 seconds) until the background worker is done with it.\n\n**Expect:** 200\n\n**Checks:**\n- active, synced, now in the second wallet"
+          }
+        },
+        {
+          "name": "The holdings moved to the second wallet",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"the 2 holdings are here\", () => pm.expect(j.data.length === 2, \"the 2 holdings are here\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/holdings?account_id={{investmentAccount2Id}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "holdings"
+              ],
+              "query": [
+                {
+                  "key": "account_id",
+                  "value": "{{investmentAccount2Id}}"
+                }
+              ]
+            },
+            "description": "Regression check, found with real Alpaca data: re-linking into another wallet used to leave the synced holdings in the old one.\n\n**Expect:** 200\n\n**Checks:**\n- the 2 holdings are here"
+          }
+        },
+        {
+          "name": "…and nothing is left in the first",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"none\", () => pm.expect(j.data.length === 0, \"none\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/holdings?account_id={{investmentAccountId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "holdings"
+              ],
+              "query": [
+                {
+                  "key": "account_id",
+                  "value": "{{investmentAccountId}}"
+                }
+              ]
+            },
+            "description": "**Expect:** 200\n\n**Checks:**\n- none"
           }
         },
         {
@@ -19471,7 +19618,7 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{baseUrl}}/holdings?account_id={{investmentAccountId}}",
+              "raw": "{{baseUrl}}/holdings?account_id={{investmentAccount2Id}}",
               "host": [
                 "{{baseUrl}}"
               ],
@@ -19481,7 +19628,7 @@
               "query": [
                 {
                   "key": "account_id",
-                  "value": "{{investmentAccountId}}"
+                  "value": "{{investmentAccount2Id}}"
                 }
               ]
             },

@@ -24,7 +24,9 @@ export async function readSecret(db, reference) {
   return open(result.rows[0].ciphertext, "vault");
 }
 
-// Destroys the secret for good: there is nothing left to decrypt.
+// Destroys the secret for good: there is nothing left to decrypt. A
+// reference that isn't a vault one (e.g. a shared test link's) holds nothing.
 export async function destroySecret(db, reference) {
+  if (!reference?.startsWith("vault:")) return;
   await db.query(`DELETE FROM vault_secrets WHERE secret_ref = $1`, [reference.replace(/^vault:/, "")]);
 }

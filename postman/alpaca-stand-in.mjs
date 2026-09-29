@@ -61,7 +61,17 @@ function position(p) {
   };
 }
 
+// The platform's own account keys (APCA-API-KEY-ID / APCA-API-SECRET-KEY),
+// used by the testing-only shared account (ALPACA_SHARED_ACCOUNT=true).
+export const STAND_IN_KEY_ID = "PKSTANDIN";
+export const STAND_IN_KEY_SECRET = "stand-in-key-secret";
+const SHARED_ACCOUNT = "PA3SHARED0001";
+
 function bearer(req) {
+  if (req.headers["apca-api-key-id"] !== undefined) {
+    const ok = req.headers["apca-api-key-id"] === STAND_IN_KEY_ID && req.headers["apca-api-secret-key"] === STAND_IN_KEY_SECRET;
+    return ok && !revoked.has(SHARED_ACCOUNT) ? SHARED_ACCOUNT : null;
+  }
   const token = (req.headers.authorization ?? "").replace(/^Bearer /, "");
   const account = tokens.get(token);
   return account && !revoked.has(account) ? account : null;
@@ -140,7 +150,9 @@ http
     // ---- Trading API
     // every positions call is counted, refused ones too, so a test can see
     // exactly how many attempts the worker made
-    const caller = tokens.get((req.headers.authorization ?? "").replace(/^Bearer /, ""));
+    const caller = req.headers["apca-api-key-id"] !== undefined
+      ? SHARED_ACCOUNT
+      : tokens.get((req.headers.authorization ?? "").replace(/^Bearer /, ""));
     if (path === "/v2/positions" && caller) calls.set(caller, (calls.get(caller) ?? 0) + 1);
     const account = bearer(req);
     if (!account) return send(res, 401, { code: 40110000, message: "access key verification failed" });

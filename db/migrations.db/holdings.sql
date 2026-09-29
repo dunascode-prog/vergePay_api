@@ -42,3 +42,7 @@ DO $$ BEGIN
     ALTER TABLE holdings ADD CONSTRAINT holding_quantity_non_negative CHECK (quantity >= 0);
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
+
+-- Crypto quantities come with 9 decimal places (e.g. 0.001167028 BTC), more
+-- than the data model's DECIMAL(18,6) keeps, so widen to 9.
+ALTER TABLE holdings ALTER COLUMN quantity TYPE NUMERIC(28,9);

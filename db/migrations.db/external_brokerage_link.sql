@@ -79,3 +79,22 @@ CREATE TABLE IF NOT EXISTS oauth_states (
 
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Where a link's brokerage credentials come from:
+--   oauth      the user's own account, connected with OAuth (the token is in the vault)
+--   platform   the platform's own brokerage account, from .env (testing only:
+--              ALPACA_SHARED_ACCOUNT=true), so every user syncs the same holdings
+ALTER TABLE external_brokerage_links ADD COLUMN IF NOT EXISTS credential_source VARCHAR(20) NOT NULL DEFAULT 'oauth';
+
+DO $$ BEGIN
+    ALTER TABLE external_brokerage_links ADD CONSTRAINT brokerage_link_credential_source
+        CHECK (credential_source IN ('oauth', 'platform'));
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+-- The one-link-per-brokerage-account rule is for users' own accounts; the
+-- shared platform account is linked by everyone.
+DROP INDEX IF EXISTS uq_brokerage_link_active_account;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_brokerage_link_active_account
+    ON external_brokerage_links(provider_name, provider_account_id)
+    WHERE link_status = 'active' AND provider_account_id IS NOT NULL AND credential_source = 'oauth';

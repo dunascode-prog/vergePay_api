@@ -1453,9 +1453,9 @@ const investments = [
   }),
   holdingsList("Holdings synced from the brokerage", [
     ["3 holdings; the option is skipped", 'j.data.length === 3 && !j.data.some((h) => h.security.ticker_symbol.startsWith("AAPL2"))'],
-    ["AAPL in cents, rounded half up", 'j.data.some((h) => h.security.ticker_symbol === "AAPL" && h.quantity === "10.000000" && h.average_cost_minor === 18525 && h.current_price_minor === 19010 && h.market_value_minor === 190100)'],
+    ["AAPL in cents, rounded half up", 'j.data.some((h) => h.security.ticker_symbol === "AAPL" && h.quantity === "10" && h.average_cost_minor === 18525 && h.current_price_minor === 19010 && h.market_value_minor === 190100)'],
     ["security nested inline with its name", 'j.data.some((h) => h.security.ticker_symbol === "AAPL" && h.security.company_name === "Apple Inc. Common Stock" && h.security.asset_type === "stock" && h.security.currency_code === "USD")'],
-    ["fractional Bitcoin kept to 6 decimals", 'j.data.some((h) => h.security.ticker_symbol === "BTCUSD" && h.quantity === "0.012346" && h.security.asset_type === "crypto")'],
+    ["fractional Bitcoin kept exactly (up to 9 decimals)", 'j.data.some((h) => h.security.ticker_symbol === "BTCUSD" && h.quantity === "0.01234567" && h.security.asset_type === "crypto")'],
     ["biggest position first", 'j.data[0].security.ticker_symbol === "AAPL"'],
   ], ),
   req("Holdings: save one id", "GET", "/holdings?account_id={{investmentAccountId}}", {
@@ -1486,7 +1486,7 @@ const investments = [
     checks: [["succeeded", 'link.last_sync_status === "succeeded"']],
   }),
   holdingsList("Sold position removed, the rest updated", [
-    ["2 holdings, AAPL now 12, VOO gone", 'j.data.length === 2 && j.data.find((h) => h.security.ticker_symbol === "AAPL").quantity === "12.000000" && !j.data.some((h) => h.security.ticker_symbol === "VOO")'],
+    ["2 holdings, AAPL now 12, VOO gone", 'j.data.length === 2 && j.data.find((h) => h.security.ticker_symbol === "AAPL").quantity === "12" && !j.data.some((h) => h.security.ticker_symbol === "VOO")'],
   ]),
   saveCalls(),
   alpacaStandIn("Stand-in: the next two calls hit a rate limit, then an outage", "/_test/fail-next", { account_number: "{{brokerageAccount}}", statuses: [429, 503] }),
@@ -1527,7 +1527,8 @@ const investments = [
     checks: [["asks to reconnect", "/Reconnect/.test(errorMessage)"]],
   }),
   reverify("Reconnecting is 'User + 2FA' too."),
-  startConnect("Reconnect: start again"),
+  openAccount("Open a second investment wallet (reconnect into it)", "investmentAccount2Id", { type: "investment_wallet", currency: "USD" }),
+  startConnect("Reconnect into the second wallet", { body: { provider_name: "alpaca", account_id: "{{investmentAccount2Id}}" } }),
   approveAtBrokerage("Reconnect: the user approves"),
   req("Reconnect: our callback reuses the same link", "GET", "", {
     rawUrl: "{{callbackUrl}}",
@@ -1536,9 +1537,15 @@ const investments = [
     checks: [["linked, same link_id", 'qp(pm.response.headers.get("Location"), "status") === "linked" && qp(pm.response.headers.get("Location"), "link_id") === v("brokerageLinkId")']],
   }),
   waitForLink("The reconnected link is active and syncs again", {
-    until: 'link.link_status === "active" && link.last_sync_status === "succeeded"',
-    checks: [["active and synced", 'link.link_status === "active" && link.last_sync_status === "succeeded"']],
+    until: 'link.link_status === "active" && link.last_sync_status === "succeeded" && link.account_id === v("investmentAccount2Id")',
+    checks: [["active, synced, now in the second wallet", 'link.link_status === "active" && link.last_sync_status === "succeeded" && link.account_id === v("investmentAccount2Id")']],
   }),
+  req("The holdings moved to the second wallet", "GET", "/holdings?account_id={{investmentAccount2Id}}", {
+    status: 200,
+    description: "Regression check, found with real Alpaca data: re-linking into another wallet used to leave the synced holdings in the old one.",
+    checks: [["the 2 holdings are here", "j.data.length === 2"]],
+  }),
+  holdingsList("…and nothing is left in the first", [["none", "j.data.length === 0"]]),
   alpacaStandIn("Stand-in: the next Alpaca login is denied", "/_test/next-authorize", { decision: "deny" }),
   startConnect("Start connecting (the user will decline)"),
   approveAtBrokerage("The user declines on Alpaca"),
@@ -1556,7 +1563,7 @@ const investments = [
     description: "Destroys the stored token (nothing is left to decrypt) and removes the holdings that came from this link.",
     checks: [["revoked", 'j.link_status === "revoked"']],
   }),
-  holdingsList("Its holdings are gone", [["none", "j.data.length === 0"]]),
+  req("Its holdings are gone", "GET", "/holdings?account_id={{investmentAccount2Id}}", { status: 200, checks: [["none", "j.data.length === 0"]] }),
   req("Gone from the links list", "GET", "/brokerage-links", { status: 200, checks: [["not listed", '!j.data.some((l) => l.link_id === v("brokerageLinkId"))']] }),
   req("Disconnect twice", "DELETE", "/brokerage-links/{{brokerageLinkId}}", { status: 409 }),
   req("Sync a disconnected link", "POST", "/brokerage-links/{{brokerageLinkId}}/sync", { status: 409 }),

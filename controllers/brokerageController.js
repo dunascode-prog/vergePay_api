@@ -66,12 +66,77 @@ async function investmentAccount(userId, accountId) {
   return account.account_id;
 }
 
+// Testing only (ALPACA_SHARED_ACCOUNT=true, never in production): instead
+// of sending the user to Alpaca, link them straight to the platform's own
+// paper account from .env, so everyone syncs the same holdings while the
+// OAuth app awaits Alpaca's approval. Reuses the user's existing shared link
+// (reactivating it if it had expired).
+async function linkSharedAccount(req, res, provider, accountId) {
+  const userId = req.user.sub;
+  const brokerageAccount = await alpaca.getAccount(alpaca.platformAuth());
+  const providerAccountId = String(brokerageAccount.account_number ?? brokerageAccount.id ?? "shared");
+
+  const { linkId, created } = await withTransaction(async (client) => {
+    const existing = await client.query(
+      `SELECT link_id, link_status FROM external_brokerage_links
+       WHERE user_id = $1 AND provider_name = $2 AND credential_source = 'platform'
+         AND link_status IN ('active', 'expired')
+       ORDER BY created_at DESC LIMIT 1
+       FOR UPDATE`,
+      [userId, provider],
+    );
+    if (existing.rows[0]) {
+      await client.query(
+        `UPDATE external_brokerage_links
+         SET link_status = 'active', account_id = $2, provider_account_id = $3,
+             last_sync_status = 'queued', last_sync_error = NULL, updated_at = NOW()
+         WHERE link_id = $1`,
+        [existing.rows[0].link_id, accountId, providerAccountId],
+      );
+      return { linkId: existing.rows[0].link_id, created: false };
+    }
+    const inserted = await client.query(
+      `INSERT INTO external_brokerage_links (
+          user_id, provider_name, oauth_token_reference, link_status, account_id,
+          provider_account_id, last_sync_status, credential_source
+       )
+       VALUES ($1, $2, 'platform', 'active', $3, $4, 'queued', 'platform')
+       RETURNING link_id`,
+      [userId, provider, accountId, providerAccountId],
+    );
+    await writeAudit(client, {
+      actorId: userId,
+      entityType: "brokerage_link",
+      entityId: inserted.rows[0].link_id,
+      action: "create",
+      after: { provider_name: provider, account_id: accountId, credential_source: "platform" },
+    });
+    return { linkId: inserted.rows[0].link_id, created: true };
+  });
+
+  try {
+    await enqueueLinkSync(linkId, "connected");
+  } catch (err) {
+    await setSyncStatus(linkId, "not_queued", err.message);
+  }
+  return res.status(created ? 201 : 200).json({
+    link_id: linkId,
+    link_status: "active",
+    connection: "shared_test_account",
+    message: "Linked to the platform's shared Alpaca paper account (testing mode). The holdings sync in the background.",
+  });
+}
+
 // POST /v1/brokerage-links
 export async function startBrokerageLink(req, res) {
   const validation = startSchema.safeParse(req.body ?? {});
   if (!validation.success) throw new ValidationError({ details: validationDetails(validation.error) });
   const { provider_name: provider, account_id } = validation.data;
   const accountId = await investmentAccount(req.user.sub, account_id);
+
+  if (provider === "alpaca" && alpaca.sharedAccountEnabled()) {
+    return linkSharedAccount(req, res, provider, accountId);
+  }
 
   // The state ties the callback to this user and request; only its hash is
   // stored, it works once, and it expires quickly.
@@ -204,6 +269,7 @@ const LINK_COLUMNS = `
     link_id, provider_name, account_id,
     CASE WHEN provider_account_id IS NULL THEN NULL
          ELSE '••••' || right(provider_account_id, 4) END AS provider_account,
+    CASE credential_source WHEN 'platform' THEN 'shared_test_account' ELSE 'oauth' END AS connection,
     link_status, last_synced_at, last_sync_status, last_sync_error, created_at`;
 
 // GET /v1/brokerage-links   (the token reference is never returned)
@@ -291,7 +357,8 @@ const HOLDING_SELECT = `
              'exchange', s.exchange,
              'currency_code', s.currency_code
            ) AS security,
-           h.quantity::text AS quantity,
+           -- as a decimal string without trailing zeros ("10", "0.001167028")
+           trim_scale(h.quantity)::text AS quantity,
            h.average_cost_minor,
            h.current_price_minor,
            h.market_value_minor,

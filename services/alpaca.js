@@ -11,6 +11,10 @@ import { ServiceUnavailableError } from "../utils/errorStr.js";
 // Alpaca doesn't document token expiry or refresh for third-party apps, so
 // a token is kept until it's refused (401/403); the link then becomes
 // "expired" and the user reconnects.
+//
+// The data calls take `auth`: an OAuth access token (a string), or the
+// platform's own API keys { keyId, secret } for the testing-only shared
+// account (ALPACA_SHARED_ACCOUNT=true; see platformAuth()).
 
 const TIMEOUT_MS = 20_000;
 
@@ -26,6 +30,20 @@ export class BrokerageUnavailableError extends AppError {
   constructor(message = "The brokerage is unavailable right now.") {
     super({ message, statusCode: 503, code: "BROKERAGE_UNAVAILABLE" });
   }
+}
+
+// The platform's own paper-account keys, for the shared test account.
+export function sharedAccountEnabled() {
+  return env.alpaca.sharedAccount;
+}
+
+export function platformAuth() {
+  if (!env.alpaca.paperKeyId || !env.alpaca.paperSecret) {
+    throw new ServiceUnavailableError({
+      message: "The shared Alpaca account isn't configured (ALPACA_PAPER_KEY_ID, ALPACA_PAPER_SECRET).",
+    });
+  }
+  return { keyId: env.alpaca.paperKeyId, secret: env.alpaca.paperSecret };
 }
 
 export function isConfigured() {
@@ -102,14 +120,19 @@ export async function exchangeCode(code) {
   return json.access_token;
 }
 
-const get = (token, path) =>
-  call(`${env.alpaca.tradingUrl}${path}`, { headers: { Authorization: `Bearer ${token}` } });
+function authHeaders(auth) {
+  return typeof auth === "string"
+    ? { Authorization: `Bearer ${auth}` }
+    : { "APCA-API-KEY-ID": auth.keyId, "APCA-API-SECRET-KEY": auth.secret };
+}
+
+const get = (auth, path) => call(`${env.alpaca.tradingUrl}${path}`, { headers: authHeaders(auth) });
 
 // { account_number, currency, status, ... }
-export const getAccount = (token) => get(token, "/v2/account");
+export const getAccount = (auth) => get(auth, "/v2/account");
 
 // [{ symbol, asset_class, exchange, qty, avg_entry_price, current_price, market_value, unrealized_pl, ... }]
-export const getPositions = (token) => get(token, "/v2/positions");
+export const getPositions = (auth) => get(auth, "/v2/positions");
 
 // { symbol, name, class, exchange, ... }
-export const getAsset = (token, symbol) => get(token, `/v2/assets/${encodeURIComponent(symbol)}`);
+export const getAsset = (auth, symbol) => get(auth, `/v2/assets/${encodeURIComponent(symbol)}`);

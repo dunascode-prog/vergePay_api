@@ -57,7 +57,7 @@ export async function expireLink(linkId, reason) {
 // the brokerage is down or rate limiting.
 export async function syncLink(linkId) {
   const found = await pool.query(
-    `SELECT link_id, user_id, account_id, provider_name, oauth_token_reference, link_status
+    `SELECT link_id, user_id, account_id, provider_name, oauth_token_reference, link_status, credential_source
      FROM external_brokerage_links WHERE link_id = $1`,
     [linkId],
   );
@@ -65,8 +65,15 @@ export async function syncLink(linkId) {
   if (!link) return { status: "skipped", reason: "link not found" };
   if (link.link_status !== "active") return { status: "skipped", reason: `link is ${link.link_status}` };
 
-  const token = await readSecret(pool, link.oauth_token_reference);
-  if (!token) throw new alpaca.BrokerageAuthError("The stored credential is missing. Reconnect the brokerage.");
+  // A user's own account uses their OAuth token from the vault; the shared
+  // test account uses the platform's keys from .env.
+  let token;
+  if (link.credential_source === "platform") {
+    token = alpaca.platformAuth();
+  } else {
+    token = await readSecret(pool, link.oauth_token_reference);
+    if (!token) throw new alpaca.BrokerageAuthError("The stored credential is missing. Reconnect the brokerage.");
+  }
 
   // All brokerage calls happen before the DB transaction, so a slow
   // brokerage never holds database locks.
@@ -90,7 +97,8 @@ export async function syncLink(linkId) {
     }
     items.push({
       ticker: position.symbol.slice(0, 15),
-      name: name.slice(0, 150),
+      // Alpaca's names can carry doubled spaces ("Bitcoin  / US Dollar")
+      name: name.replace(/\s+/g, " ").trim().slice(0, 150),
       assetType,
       exchange: position.exchange?.slice(0, 50) ?? null,
       quantity: String(position.qty),
@@ -131,7 +139,9 @@ export async function syncLink(linkId) {
          )
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
          ON CONFLICT (external_link_id, security_id) WHERE external_link_id IS NOT NULL DO UPDATE
-           SET quantity = EXCLUDED.quantity,
+           -- the link may have been moved to another wallet since the last sync
+           SET account_id = EXCLUDED.account_id,
+               quantity = EXCLUDED.quantity,
                average_cost_minor = EXCLUDED.average_cost_minor,
                current_price_minor = EXCLUDED.current_price_minor,
                market_value_minor = EXCLUDED.market_value_minor,
