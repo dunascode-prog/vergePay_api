@@ -28,3 +28,6 @@ CREATE TABLE IF NOT EXISTS securities (
         FOREIGN KEY (currency_code)
         REFERENCES currencies(code)
 );
+
+-- Brokerages also hold crypto (Alpaca reports asset_class "crypto").
+ALTER TYPE asset_type_enum ADD VALUE IF NOT EXISTS 'crypto';

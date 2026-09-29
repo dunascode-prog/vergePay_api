@@ -8,6 +8,8 @@ import { postOnce, postTransaction, publicTransaction } from "../services/ledger
 import { BadRequestError, NotFoundError, ValidationError } from "../utils/errorStr.js";
 import { ipKeyGenerator } from "express-rate-limit";
 import { moneyLimiter, signinLimiter, twoFactorLimiter } from "../utils/rateLimiters.js";
+import { endSession, issueSession } from "../utils/session.js";
+import { brokerageQueue } from "../services/queue.js";
 import { isUuid, validationDetails } from "../utils/validation.js";
 
 // ₦10,000,000 (in kobo) per top-up keeps test balances in a sane range.
@@ -133,6 +135,13 @@ export async function resetTestUser(req, res) {
      FROM users WHERE user_id = $1`,
     [userId],
   );
+  // With 2FA now off, a session that was still waiting for its code (a run
+  // that stopped with 2FA on) is swapped for a normal one, so the caller can
+  // carry on without signing in again.
+  if (flags.two_factor) {
+    await endSession(req, res);
+    await issueSession(res, user.rows[0]);
+  }
   return res.status(200).json(user.rows[0]);
 }
 
@@ -172,6 +181,40 @@ export async function backdateInvoice(req, res) {
   );
   if (result.rowCount === 0) throw new NotFoundError({ message: "Invoice not found." });
   return res.status(200).json({ invoice_id: invoiceId, due_date: result.rows[0].due_date });
+}
+
+const expireStateSchema = z.strictObject({ state: z.string().min(1) });
+
+// POST /v1/dev/oauth-states/expire  { state }
+// Ages one of the caller's pending brokerage connections past its 10-minute
+// window, to see the callback refuse it.
+export async function expireOauthState(req, res) {
+  const validation = expireStateSchema.safeParse(req.body ?? {});
+  if (!validation.success) {
+    throw new ValidationError({ details: validationDetails(validation.error) });
+  }
+  const result = await pool.query(
+    `UPDATE oauth_states SET expires_at = NOW() - interval '1 minute'
+     WHERE state_hash = encode(sha256(convert_to($1, 'UTF8')), 'hex') AND user_id = $2`,
+    [validation.data.state, req.user.sub],
+  );
+  if (result.rowCount === 0) throw new NotFoundError({ message: "No pending connection with that state." });
+  return res.status(200).json({ expired: true });
+}
+
+// POST /v1/dev/brokerage/run-scheduler
+// Makes the caller's active brokerage links look overdue, then queues the
+// same "sync-all-links" job the scheduler runs every 15 minutes, so its
+// effect can be checked without waiting.
+export async function runBrokerageScheduler(req, res) {
+  const due = await pool.query(
+    `UPDATE external_brokerage_links SET last_synced_at = NOW() - interval '1 day'
+     WHERE user_id = $1 AND link_status = 'active'
+     RETURNING link_id`,
+    [req.user.sub],
+  );
+  await brokerageQueue().add("sync-all-links", {}, { attempts: 1, removeOnComplete: true, removeOnFail: true });
+  return res.status(202).json({ made_due: due.rows.map((r) => r.link_id), job: "sync-all-links" });
 }
 
 // GET /v1/dev/invariants

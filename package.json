@@ -6,10 +6,13 @@
   "type": "module",
   "scripts": {
     "start-dev": "nodemon server.js",
+    "worker": "node worker.js",
     "db:init": "node db/initDB.js",
     "postman:build": "node postman/build-collection.mjs",
     "flw:stand-in": "node postman/flutterwave-stand-in.mjs",
+    "alpaca:stand-in": "node postman/alpaca-stand-in.mjs",
     "start:with-stand-in": "node postman/start-api-with-stand-in.mjs",
+    "worker:with-stand-in": "node postman/start-worker-with-stand-in.mjs",
     "start:flw-sandbox": "node postman/start-api-for-sandbox.mjs",
     "test:postman": "node postman/run-suite.mjs",
     "test": "echo \"Error: no test specified\" && exit 1"
@@ -34,7 +37,9 @@
   },
   "dependencies": {
     "@hookform/resolvers": "^5.4.0",
+    "bullmq": "^6.3.9",
     "cookie-parser": "^1.4.7",
-    "cors": "^2.8.6"
+    "cors": "^2.8.6",
+    "ioredis": "^5.11.1"
   }
 }

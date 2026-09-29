@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import jwt from "jsonwebtoken";
 import env from "../env.js";
 import {
@@ -8,9 +9,14 @@ import {
 
 const jwtOptions = { issuer: "VergePay", audience: "vergepay-api" };
 
+// Every token gets a random id (jti). Without one, two sessions issued for
+// the same user in the same second (a double-clicked sign-in, two devices)
+// were byte-for-byte identical, and the second refresh token collided on
+// its unique hash.
 export function createAccessToken(payload, accessSecret, accessExpiry) {
   const token = jwt.sign(payload, accessSecret, {
     expiresIn: accessExpiry,
+    jwtid: crypto.randomUUID(),
     ...jwtOptions,
   });
   return token;
@@ -19,6 +25,7 @@ export function createAccessToken(payload, accessSecret, accessExpiry) {
 export function createRefreshToken(payload, refreshSecret, refreshExpiry) {
   const token = jwt.sign(payload, refreshSecret, {
     expiresIn: refreshExpiry,
+    jwtid: crypto.randomUUID(),
     ...jwtOptions,
   });
   return token;
