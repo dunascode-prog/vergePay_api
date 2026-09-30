@@ -4,6 +4,7 @@ import {
   freezeAccount,
   getAccount,
   listAccounts,
+  lookupAccountName,
   openAccount,
   unfreezeAccount,
   updateAccount,
@@ -18,6 +19,7 @@ import {
 } from "../controllers/virtualAccountController.js";
 import { idempotency } from "../utils/idempotency.js";
 import { verifyAccessToken } from "../utils/jwt.js";
+import { lookupLimiter } from "../utils/rateLimiters.js";
 
 const accountRouter = express.Router();
 
@@ -25,6 +27,8 @@ accountRouter.use(verifyAccessToken);
 
 accountRouter.get("/", listAccounts);
 accountRouter.post("/", idempotency, openAccount);
+// before /:accountId, so "lookup" isn't read as an account id
+accountRouter.get("/lookup", lookupLimiter, lookupAccountName);
 accountRouter.get("/:accountId", getAccount);
 accountRouter.patch("/:accountId", updateAccount);
 accountRouter.get("/:accountId/transactions", listAccountTransactions);

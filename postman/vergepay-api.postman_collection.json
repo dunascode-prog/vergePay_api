@@ -957,7 +957,7 @@
     },
     {
       "name": "3. Accounts",
-      "description": "Opening, idempotency, editing, and the legal status transitions. As Tolu.",
+      "description": "The two-wallet rule (one personal, one business; a concurrent race), opening, idempotency, editing, and the legal status transitions. A fresh account holder.",
       "item": [
         {
           "name": "New user: account holder",
@@ -2359,7 +2359,7 @@
     },
     {
       "name": "4. Transactions",
-      "description": "Transfers through the double-entry ledger: idempotency (including a lost record), validation, history, pagination, reversal. As Tolu.",
+      "description": "Transfers through the double-entry ledger: idempotency (including a lost record), validation, history, pagination, reversal. A fresh sender.",
       "item": [
         {
           "name": "New user: sender",
@@ -3684,8 +3684,1206 @@
       ]
     },
     {
-      "name": "5. Loans",
-      "description": "Application, back-office approval and payout, the schedule, repayments (including a concurrent race), rejection. As Tolu, with the internal key for back-office calls.",
+      "name": "5. Identity verification and name lookup",
+      "description": "KYC by BVN (validation, the sandbox provider's asynchronous reject and approve, retry, idempotency, locked legal name, no sensitive data returned) and the account-name lookup. A fresh customer.",
+      "item": [
+        {
+          "name": "New user: customer verifying their identity",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"kycuserUsername\", \"kycuser_\" + Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/signup",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "signup"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{kycuserUsername}}\",\n  \"email\": \"{{kycuserUsername}}@vergepay.dev\",\n  \"password\": \"VergePay#Test2026\",\n  \"confirmPassword\": \"VergePay#Test2026\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "A fresh user for this run, so the customer verifying their identity steps start with no wallets.\n\n**Expect:** 201"
+          }
+        },
+        {
+          "name": "Sign in as customer verifying their identity",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"session cookies set\", () => pm.expect(pm.cookies.has(\"access_token\") && pm.cookies.has(\"refresh_token\"), \"session cookies set\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/signin",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "signin"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{kycuserUsername}}@vergepay.dev\",\n  \"password\": \"VergePay#Test2026\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Switches the session to this run's customer verifying their identity user.\n\n**Expect:** 200\n\n**Checks:**\n- session cookies set"
+          }
+        },
+        {
+          "name": "No submissions yet",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"empty\", () => pm.expect(Array.isArray(j.data) && j.data.length === 0, \"empty\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/kyc/submissions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "kyc",
+                "submissions"
+              ]
+            },
+            "description": "**Expect:** 200\n\n**Checks:**\n- empty"
+          }
+        },
+        {
+          "name": "Name lookup before verifying",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 403\", () => pm.response.to.have.status(403));",
+                  "pm.test(\"asks for KYC\", () => pm.expect(errorCode === \"KYC_REQUIRED\", \"asks for KYC\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/accounts/lookup?account_number={{receiverAccountNumber}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "accounts",
+                "lookup"
+              ],
+              "query": [
+                {
+                  "key": "account_number",
+                  "value": "{{receiverAccountNumber}}"
+                }
+              ]
+            },
+            "description": "Only verified customers can look up who holds an account number.\n\n**Expect:** 403\n\n**Checks:**\n- asks for KYC"
+          }
+        },
+        {
+          "name": "Submit - BVN too short",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 422\", () => pm.response.to.have.status(422));",
+                  "pm.test(\"bvn flagged\", () => pm.expect(Boolean(j.error.details.bvn), \"bvn flagged\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/kyc/submissions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "kyc",
+                "submissions"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"document_type\": \"bvn\",\n  \"bvn\": \"2222222222\",\n  \"first_name\": \"Ada\",\n  \"last_name\": \"Obi\",\n  \"date_of_birth\": \"1995-04-12\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "**Expect:** 422\n\n**Checks:**\n- bvn flagged"
+          }
+        },
+        {
+          "name": "Submit - under 18",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 422\", () => pm.response.to.have.status(422));",
+                  "pm.test(\"date_of_birth flagged\", () => pm.expect(Boolean(j.error.details.date_of_birth), \"date_of_birth flagged\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/kyc/submissions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "kyc",
+                "submissions"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"document_type\": \"bvn\",\n  \"bvn\": \"22222222222\",\n  \"first_name\": \"Ada\",\n  \"last_name\": \"Obi\",\n  \"date_of_birth\": \"2015-01-01\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "**Expect:** 422\n\n**Checks:**\n- date_of_birth flagged"
+          }
+        },
+        {
+          "name": "Submit - unsupported document",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 422\", () => pm.response.to.have.status(422));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/kyc/submissions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "kyc",
+                "submissions"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"document_type\": \"passport\",\n  \"bvn\": \"22222222222\",\n  \"first_name\": \"Ada\",\n  \"last_name\": \"Obi\",\n  \"date_of_birth\": \"1995-04-12\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "**Expect:** 422"
+          }
+        },
+        {
+          "name": "Submit - a name with digits",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 422\", () => pm.response.to.have.status(422));",
+                  "pm.test(\"first_name flagged\", () => pm.expect(Boolean(j.error.details.first_name), \"first_name flagged\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/kyc/submissions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "kyc",
+                "submissions"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"document_type\": \"bvn\",\n  \"bvn\": \"22222222222\",\n  \"first_name\": \"Ad4\",\n  \"last_name\": \"Obi\",\n  \"date_of_birth\": \"1995-04-12\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "**Expect:** 422\n\n**Checks:**\n- first_name flagged"
+          }
+        },
+        {
+          "name": "Submit a BVN the provider rejects",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 202\", () => pm.response.to.have.status(202));",
+                  "pm.test(\"pending\", () => pm.expect(j.verification_status === \"pending\", \"pending\").to.be.true);",
+                  "pm.test(\"BVN not echoed\", () => pm.expect(!pm.response.text().includes(\"00000000000\"), \"BVN not echoed\").to.be.true);",
+                  "try { pm.collectionVariables.set(\"kycId\", j.kyc_id); } catch (e) {}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/kyc/submissions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "kyc",
+                "submissions"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"document_type\": \"bvn\",\n  \"bvn\": \"00000000000\",\n  \"first_name\": \"Ada\",\n  \"last_name\": \"Obi\",\n  \"date_of_birth\": \"1995-04-12\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Accepted and checked asynchronously (API doc 3.2): the verdict isn't in the response.\n\n**Expect:** 202\n\n**Checks:**\n- pending\n- BVN not echoed"
+          }
+        },
+        {
+          "name": "Submit again while one is pending",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 409\", () => pm.response.to.have.status(409));",
+                  "pm.test(\"in progress\", () => pm.expect(/in progress/.test(errorMessage), \"in progress\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/kyc/submissions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "kyc",
+                "submissions"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"document_type\": \"bvn\",\n  \"bvn\": \"22222222222\",\n  \"first_name\": \"Ada\",\n  \"last_name\": \"Obi\",\n  \"date_of_birth\": \"1995-04-12\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "**Expect:** 409\n\n**Checks:**\n- in progress"
+          }
+        },
+        {
+          "name": "The provider rejects it",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const started = Date.now();",
+                  "const poll = () => pm.sendRequest({ url: pm.variables.replaceIn(\"{{baseUrl}}/kyc/submissions/{{kycId}}\"), method: \"GET\" }, (err, res) => {",
+                  "  const s = res.json();",
+                  "  const done = (s.verification_status !== \"pending\");",
+                  "  if (!done && Date.now() - started < 20000) return setTimeout(poll, 400);",
+                  "  pm.test(\"rejected with a reason\", () => pm.expect(Boolean(s.verification_status === \"rejected\" && /No BVN record/.test(s.rejection_reason)), JSON.stringify(s)).to.be.true);",
+                  "});",
+                  "poll();"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/kyc/submissions/{{kycId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "kyc",
+                "submissions",
+                "{{kycId}}"
+              ]
+            },
+            "description": "Polls the submission (up to 20 seconds) until the sandbox provider has decided.\n\n**Expect:** 200\n\n**Checks:**\n- rejected with a reason"
+          }
+        },
+        {
+          "name": "Profile shows rejected",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"kyc_status rejected\", () => pm.expect(j.kyc_status === \"rejected\", \"kyc_status rejected\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/users/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "users",
+                "me"
+              ]
+            },
+            "description": "**Expect:** 200\n\n**Checks:**\n- kyc_status rejected"
+          }
+        },
+        {
+          "name": "Submit the right BVN",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"idempotencyKey\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 202\", () => pm.response.to.have.status(202));",
+                  "pm.test(\"pending\", () => pm.expect(j.verification_status === \"pending\", \"pending\").to.be.true);",
+                  "try { pm.collectionVariables.set(\"kycId\", j.kyc_id); } catch (e) {}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/kyc/submissions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "kyc",
+                "submissions"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"document_type\": \"bvn\",\n  \"bvn\": \"22222222222\",\n  \"first_name\": \"Ada\",\n  \"last_name\": \"Obi\",\n  \"date_of_birth\": \"1995-04-12\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Retrying after a rejection is allowed.\n\n**Expect:** 202\n\n**Checks:**\n- pending"
+          }
+        },
+        {
+          "name": "Same key again (replayed, no second submission)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 202\", () => pm.response.to.have.status(202));",
+                  "pm.test(\"same submission\", () => pm.expect(j.kyc_id === v(\"kycId\"), \"same submission\").to.be.true);",
+                  "pm.test(\"marked as a replay\", () => pm.expect(replayed, \"marked as a replay\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/kyc/submissions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "kyc",
+                "submissions"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"document_type\": \"bvn\",\n  \"bvn\": \"22222222222\",\n  \"first_name\": \"Ada\",\n  \"last_name\": \"Obi\",\n  \"date_of_birth\": \"1995-04-12\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "**Expect:** 202\n\n**Checks:**\n- same submission\n- marked as a replay"
+          }
+        },
+        {
+          "name": "The provider approves it",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const started = Date.now();",
+                  "const poll = () => pm.sendRequest({ url: pm.variables.replaceIn(\"{{baseUrl}}/kyc/submissions/{{kycId}}\"), method: \"GET\" }, (err, res) => {",
+                  "  const s = res.json();",
+                  "  const done = (s.verification_status !== \"pending\");",
+                  "  if (!done && Date.now() - started < 20000) return setTimeout(poll, 400);",
+                  "  pm.test(\"approved, no reason\", () => pm.expect(Boolean(s.verification_status === \"approved\" && s.rejection_reason === null && Boolean(s.reviewed_at)), JSON.stringify(s)).to.be.true);",
+                  "});",
+                  "poll();"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/kyc/submissions/{{kycId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "kyc",
+                "submissions",
+                "{{kycId}}"
+              ]
+            },
+            "description": "Polls the submission (up to 20 seconds) until the sandbox provider has decided.\n\n**Expect:** 200\n\n**Checks:**\n- approved, no reason"
+          }
+        },
+        {
+          "name": "Profile is verified, with the legal name and date of birth",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"verified as Ada Obi, born 1995-04-12\", () => pm.expect(j.kyc_status === \"verified\" && j.first_name === \"Ada\" && j.last_name === \"Obi\" && j.date_of_birth === \"1995-04-12\", \"verified as Ada Obi, born 1995-04-12\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/users/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "users",
+                "me"
+              ]
+            },
+            "description": "**Expect:** 200\n\n**Checks:**\n- verified as Ada Obi, born 1995-04-12"
+          }
+        },
+        {
+          "name": "The legal name is locked now",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 409\", () => pm.response.to.have.status(409));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/users/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "users",
+                "me"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"first_name\": \"Adaeze\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "**Expect:** 409"
+          }
+        },
+        {
+          "name": "Submit after being verified",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 409\", () => pm.response.to.have.status(409));",
+                  "pm.test(\"already verified\", () => pm.expect(/already verified/.test(errorMessage), \"already verified\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/kyc/submissions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "kyc",
+                "submissions"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"document_type\": \"bvn\",\n  \"bvn\": \"22222222222\",\n  \"first_name\": \"Ada\",\n  \"last_name\": \"Obi\",\n  \"date_of_birth\": \"1995-04-12\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "**Expect:** 409\n\n**Checks:**\n- already verified"
+          }
+        },
+        {
+          "name": "History: newest first, no BVN or vault reference",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"approved then rejected\", () => pm.expect(j.data.length === 2 && j.data[0].verification_status === \"approved\" && j.data[1].verification_status === \"rejected\", \"approved then rejected\").to.be.true);",
+                  "pm.test(\"nothing sensitive\", () => pm.expect(!/vault:|22222222222|00000000000|document_reference/.test(pm.response.text()), \"nothing sensitive\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/kyc/submissions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "kyc",
+                "submissions"
+              ]
+            },
+            "description": "**Expect:** 200\n\n**Checks:**\n- approved then rejected\n- nothing sensitive"
+          }
+        },
+        {
+          "name": "Someone else's / unknown submission",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/kyc/submissions/00000000-0000-4000-8000-000000000000",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "kyc",
+                "submissions",
+                "00000000-0000-4000-8000-000000000000"
+              ]
+            },
+            "description": "**Expect:** 404"
+          }
+        },
+        {
+          "name": "Look up another customer's wallet",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"their name, the currency, not mine\", () => pm.expect(j.account_number === v(\"receiverAccountNumber\") && j.account_name === v(\"senderUsername\") && j.currency_code === \"NGN\" && j.is_own === false, \"their name, the currency, not mine\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/accounts/lookup?account_number={{receiverAccountNumber}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "accounts",
+                "lookup"
+              ],
+              "query": [
+                {
+                  "key": "account_number",
+                  "value": "{{receiverAccountNumber}}"
+                }
+              ]
+            },
+            "description": "The receiver from folder 4 (a business wallet). Their name is their username: they never verified.\n\n**Expect:** 200\n\n**Checks:**\n- their name, the currency, not mine"
+          }
+        },
+        {
+          "name": "Open my wallet",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"idempotencyKey\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "try { pm.collectionVariables.set(\"kycWalletId\", j.account_id); } catch (e) {}",
+                  "try { pm.collectionVariables.set(\"kycWalletNumber\", j.account_number); } catch (e) {}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/accounts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "accounts"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"account_type\": \"current\",\n  \"currency_code\": \"NGN\",\n  \"purpose\": \"personal\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "**Expect:** 201"
+          }
+        },
+        {
+          "name": "Look up my own wallet",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"my legal name, marked as mine\", () => pm.expect(j.account_name === \"Ada Obi\" && j.is_own === true, \"my legal name, marked as mine\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/accounts/lookup?account_number={{kycWalletNumber}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "accounts",
+                "lookup"
+              ],
+              "query": [
+                {
+                  "key": "account_number",
+                  "value": "{{kycWalletNumber}}"
+                }
+              ]
+            },
+            "description": "**Expect:** 200\n\n**Checks:**\n- my legal name, marked as mine"
+          }
+        },
+        {
+          "name": "Look up - not 10 digits",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 422\", () => pm.response.to.have.status(422));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/accounts/lookup?account_number=12345",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "accounts",
+                "lookup"
+              ],
+              "query": [
+                {
+                  "key": "account_number",
+                  "value": "12345"
+                }
+              ]
+            },
+            "description": "**Expect:** 422"
+          }
+        },
+        {
+          "name": "Look up - no such wallet",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/accounts/lookup?account_number=0000000000",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "accounts",
+                "lookup"
+              ],
+              "query": [
+                {
+                  "key": "account_number",
+                  "value": "0000000000"
+                }
+              ]
+            },
+            "description": "**Expect:** 404"
+          }
+        }
+      ]
+    },
+    {
+      "name": "6. Loans",
+      "description": "Application, back-office approval and payout, the schedule, repayments (including a concurrent race), rejection. A fresh borrower, with the internal key for back-office calls.",
       "item": [
         {
           "name": "New user: borrower",
@@ -6407,8 +7605,8 @@
       ]
     },
     {
-      "name": "6. Invoices",
-      "description": "Tolu bills Ada: validation, visibility, payment, cancellation, overdue, the close guard, a concurrent payment race, and full refunds (including a concurrent refund race).",
+      "name": "7. Invoices",
+      "description": "Tolu bills Ada (fresh users each run): validation, visibility, payment, cancellation, overdue, the close guard, a concurrent payment race, and full refunds (including a concurrent refund race).",
       "item": [
         {
           "name": "New user: USD account holder",
@@ -11516,7 +12714,7 @@
       ]
     },
     {
-      "name": "7. Two-factor authentication",
+      "name": "8. Two-factor authentication",
       "description": "TOTP setup, the sign-in challenge, one-time codes and the recent-confirmation rule. As Ada. Codes are computed in Postman.",
       "item": [
         {
@@ -12620,8 +13818,8 @@
       ]
     },
     {
-      "name": "8. Cards, webhook and bank transfers",
-      "description": "Card linking through hosted checkout, the signed webhook (v3 and v4), saved-card charges (pending, instant, 3-D Secure, declined, tampered, failed), spending controls, block/unblock/remove, and bank-transfer funding. As Ada, against the Flutterwave stand-in.",
+      "name": "9. Cards, webhook and bank transfers",
+      "description": "Card linking through hosted checkout, the signed webhook (v3 and v4), saved-card charges (pending, instant, 3-D Secure, declined, tampered, failed), spending controls, block/unblock/remove, and bank-transfer funding. A fresh card holder, against the Flutterwave stand-in.",
       "item": [
         {
           "name": "Stand-in: is it running? (sets charges to 'pending')",
@@ -18200,8 +19398,8 @@
       ]
     },
     {
-      "name": "9. Investments",
-      "description": "Connecting an Alpaca brokerage account with OAuth (approve, deny, replayed, forged and expired states, reconnect), background syncs by the BullMQ worker (retries with backoff, giving up, the scheduler, a revoked token), the synced holdings, and disconnecting. As Ada, against the Alpaca stand-in; needs the worker running.",
+      "name": "10. Investments",
+      "description": "Connecting an Alpaca brokerage account with OAuth (approve, deny, replayed, forged and expired states, reconnect), background syncs by the BullMQ worker (retries with backoff, giving up, the scheduler, a revoked token), the synced holdings, and disconnecting. A fresh investor, against the Alpaca stand-in; needs the worker running.",
       "item": [
         {
           "name": "Stand-in: the next Alpaca login approves (fresh brokerage account)",
@@ -21394,7 +22592,7 @@
       ]
     },
     {
-      "name": "10. Wrap-up",
+      "name": "11. Wrap-up",
       "description": "The 2FA brute-force limit, resetting the test users, and logout.",
       "item": [
         {

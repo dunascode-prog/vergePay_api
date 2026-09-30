@@ -104,6 +104,12 @@ export async function resetTestUser(req, res) {
 
   if (flags.kyc) {
     await pool.query(`UPDATE users SET kyc_status = 'unverified' WHERE user_id = $1`, [userId]);
+    // a submission still in flight would block a fresh one
+    await pool.query(
+      `UPDATE kyc_verification SET verification_status = 'rejected', rejection_reason = 'Reset (development)', reviewed_at = NOW()
+       WHERE user_id = $1 AND verification_status = 'pending'`,
+      [userId],
+    );
   }
   if (flags.two_factor) {
     await pool.query(

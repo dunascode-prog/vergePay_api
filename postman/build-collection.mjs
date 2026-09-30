@@ -664,7 +664,109 @@ const transactions = [
 ];
 
 // ---------------------------------------------------------------------------
-// 5. Loans (a fresh borrower; the back office uses the internal key)
+// 5. Identity verification (KYC) and name lookup (a fresh customer)
+//
+// The sandbox KYC provider (development and tests only) decides a moment
+// after the submission: BVN 00000000000 is rejected, 11111111111 rejected
+// for a name mismatch, anything else approved.
+
+const kycBody = { document_type: "bvn", bvn: "22222222222", first_name: "Ada", last_name: "Obi", date_of_birth: "1995-04-12" };
+
+function waitForKyc(name, { until, checks }) {
+  return req(name, "GET", "/kyc/submissions/{{kycId}}", {
+    status: 200,
+    description: "Polls the submission (up to 20 seconds) until the sandbox provider has decided.",
+    extraCheckLabels: checks.map(([label]) => label),
+    tests: [
+      "const started = Date.now();",
+      "const poll = () => pm.sendRequest({ url: pm.variables.replaceIn(\"{{baseUrl}}/kyc/submissions/{{kycId}}\"), method: \"GET\" }, (err, res) => {",
+      "  const s = res.json();",
+      `  const done = (${until});`,
+      "  if (!done && Date.now() - started < 20000) return setTimeout(poll, 400);",
+      ...checks.map(([label, expr]) => `  pm.test(${JSON.stringify(label)}, () => pm.expect(Boolean(${expr}), JSON.stringify(s)).to.be.true);`),
+      "});",
+      "poll();",
+    ],
+  });
+}
+
+const kyc = [
+  ...newUser("kycuser", "customer verifying their identity"),
+  req("No submissions yet", "GET", "/kyc/submissions", { status: 200, checks: [["empty", "Array.isArray(j.data) && j.data.length === 0"]] }),
+  req("Name lookup before verifying", "GET", "/accounts/lookup?account_number={{receiverAccountNumber}}", {
+    status: 403,
+    description: "Only verified customers can look up who holds an account number.",
+    checks: [["asks for KYC", 'errorCode === "KYC_REQUIRED"']],
+  }),
+  req("Submit - BVN too short", "POST", "/kyc/submissions", { body: { ...kycBody, bvn: "2222222222" }, status: 422, checks: [["bvn flagged", "Boolean(j.error.details.bvn)"]] }),
+  req("Submit - under 18", "POST", "/kyc/submissions", { body: { ...kycBody, date_of_birth: "2015-01-01" }, status: 422, checks: [["date_of_birth flagged", "Boolean(j.error.details.date_of_birth)"]] }),
+  req("Submit - unsupported document", "POST", "/kyc/submissions", { body: { ...kycBody, document_type: "passport" }, status: 422 }),
+  req("Submit - a name with digits", "POST", "/kyc/submissions", { body: { ...kycBody, first_name: "Ad4" }, status: 422, checks: [["first_name flagged", "Boolean(j.error.details.first_name)"]] }),
+  req("Submit a BVN the provider rejects", "POST", "/kyc/submissions", {
+    body: { ...kycBody, bvn: "00000000000" },
+    status: 202,
+    description: "Accepted and checked asynchronously (API doc 3.2): the verdict isn't in the response.",
+    save: [["kycId", "j.kyc_id"]],
+    checks: [["pending", 'j.verification_status === "pending"'], ["BVN not echoed", '!pm.response.text().includes("00000000000")']],
+  }),
+  req("Submit again while one is pending", "POST", "/kyc/submissions", { body: kycBody, status: 409, checks: [["in progress", "/in progress/.test(errorMessage)"]] }),
+  waitForKyc("The provider rejects it", {
+    until: 's.verification_status !== "pending"',
+    checks: [["rejected with a reason", 's.verification_status === "rejected" && /No BVN record/.test(s.rejection_reason)']],
+  }),
+  req("Profile shows rejected", "GET", "/users/me", { status: 200, checks: [["kyc_status rejected", 'j.kyc_status === "rejected"']] }),
+  req("Submit the right BVN", "POST", "/kyc/submissions", {
+    idem: "new",
+    body: kycBody,
+    status: 202,
+    description: "Retrying after a rejection is allowed.",
+    save: [["kycId", "j.kyc_id"]],
+    checks: [["pending", 'j.verification_status === "pending"']],
+  }),
+  req("Same key again (replayed, no second submission)", "POST", "/kyc/submissions", {
+    idem: "same",
+    body: kycBody,
+    status: 202,
+    checks: [["same submission", 'j.kyc_id === v("kycId")'], ["marked as a replay", "replayed"]],
+  }),
+  waitForKyc("The provider approves it", {
+    until: 's.verification_status !== "pending"',
+    checks: [["approved, no reason", 's.verification_status === "approved" && s.rejection_reason === null && Boolean(s.reviewed_at)']],
+  }),
+  req("Profile is verified, with the legal name and date of birth", "GET", "/users/me", {
+    status: 200,
+    checks: [["verified as Ada Obi, born 1995-04-12", 'j.kyc_status === "verified" && j.first_name === "Ada" && j.last_name === "Obi" && j.date_of_birth === "1995-04-12"']],
+  }),
+  req("The legal name is locked now", "PATCH", "/users/me", { body: { first_name: "Adaeze" }, status: 409 }),
+  req("Submit after being verified", "POST", "/kyc/submissions", { body: kycBody, status: 409, checks: [["already verified", "/already verified/.test(errorMessage)"]] }),
+  req("History: newest first, no BVN or vault reference", "GET", "/kyc/submissions", {
+    status: 200,
+    checks: [
+      ["approved then rejected", 'j.data.length === 2 && j.data[0].verification_status === "approved" && j.data[1].verification_status === "rejected"'],
+      ["nothing sensitive", '!/vault:|22222222222|00000000000|document_reference/.test(pm.response.text())'],
+    ],
+  }),
+  req("Someone else's / unknown submission", "GET", "/kyc/submissions/00000000-0000-4000-8000-000000000000", { status: 404 }),
+
+  // Name lookup ("name enquiry") before sending money
+  req("Look up another customer's wallet", "GET", "/accounts/lookup?account_number={{receiverAccountNumber}}", {
+    status: 200,
+    description: "The receiver from folder 4 (a business wallet). Their name is their username: they never verified.",
+    checks: [
+      ["their name, the currency, not mine", 'j.account_number === v("receiverAccountNumber") && j.account_name === v("senderUsername") && j.currency_code === "NGN" && j.is_own === false'],
+    ],
+  }),
+  openAccount("Open my wallet", "kycWalletId", { saveNumber: "kycWalletNumber" }),
+  req("Look up my own wallet", "GET", "/accounts/lookup?account_number={{kycWalletNumber}}", {
+    status: 200,
+    checks: [["my legal name, marked as mine", 'j.account_name === "Ada Obi" && j.is_own === true']],
+  }),
+  req("Look up - not 10 digits", "GET", "/accounts/lookup?account_number=12345", { status: 422 }),
+  req("Look up - no such wallet", "GET", "/accounts/lookup?account_number=0000000000", { status: 404 }),
+];
+
+// ---------------------------------------------------------------------------
+// 6. Loans (a fresh borrower; the back office uses the internal key)
 
 const loanApplication = {
   account_id: "{{loanAccountId}}",
@@ -1809,14 +1911,15 @@ const main = collection(
     folder("0. Setup", "Resets the two test users so the suite can run from a clean state.", setup),
     folder("1. Auth", "Sign-up, sign-in, one-time refresh tokens. As Tolu.", auth),
     folder("2. Profile", "Profile edits and the 2FA guards before 2FA exists. As Tolu.", profile),
-    folder("3. Accounts", "Opening, idempotency, editing, and the legal status transitions. As Tolu.", accounts),
-    folder("4. Transactions", "Transfers through the double-entry ledger: idempotency (including a lost record), validation, history, pagination, reversal. As Tolu.", transactions),
-    folder("5. Loans", "Application, back-office approval and payout, the schedule, repayments (including a concurrent race), rejection. As Tolu, with the internal key for back-office calls.", loans),
-    folder("6. Invoices", "Tolu bills Ada: validation, visibility, payment, cancellation, overdue, the close guard, a concurrent payment race, and full refunds (including a concurrent refund race).", invoices),
-    folder("7. Two-factor authentication", "TOTP setup, the sign-in challenge, one-time codes and the recent-confirmation rule. As Ada. Codes are computed in Postman.", twoFactor),
-    folder("8. Cards, webhook and bank transfers", "Card linking through hosted checkout, the signed webhook (v3 and v4), saved-card charges (pending, instant, 3-D Secure, declined, tampered, failed), spending controls, block/unblock/remove, and bank-transfer funding. As Ada, against the Flutterwave stand-in.", cards),
-    folder("9. Investments", "Connecting an Alpaca brokerage account with OAuth (approve, deny, replayed, forged and expired states, reconnect), background syncs by the BullMQ worker (retries with backoff, giving up, the scheduler, a revoked token), the synced holdings, and disconnecting. As Ada, against the Alpaca stand-in; needs the worker running.", investments),
-    folder("10. Wrap-up", "The 2FA brute-force limit, resetting the test users, and logout.", wrapUp),
+    folder("3. Accounts", "The two-wallet rule (one personal, one business; a concurrent race), opening, idempotency, editing, and the legal status transitions. A fresh account holder.", accounts),
+    folder("4. Transactions", "Transfers through the double-entry ledger: idempotency (including a lost record), validation, history, pagination, reversal. A fresh sender.", transactions),
+    folder("5. Identity verification and name lookup", "KYC by BVN (validation, the sandbox provider's asynchronous reject and approve, retry, idempotency, locked legal name, no sensitive data returned) and the account-name lookup. A fresh customer.", kyc),
+    folder("6. Loans", "Application, back-office approval and payout, the schedule, repayments (including a concurrent race), rejection. A fresh borrower, with the internal key for back-office calls.", loans),
+    folder("7. Invoices", "Tolu bills Ada (fresh users each run): validation, visibility, payment, cancellation, overdue, the close guard, a concurrent payment race, and full refunds (including a concurrent refund race).", invoices),
+    folder("8. Two-factor authentication", "TOTP setup, the sign-in challenge, one-time codes and the recent-confirmation rule. As Ada. Codes are computed in Postman.", twoFactor),
+    folder("9. Cards, webhook and bank transfers", "Card linking through hosted checkout, the signed webhook (v3 and v4), saved-card charges (pending, instant, 3-D Secure, declined, tampered, failed), spending controls, block/unblock/remove, and bank-transfer funding. A fresh card holder, against the Flutterwave stand-in.", cards),
+    folder("10. Investments", "Connecting an Alpaca brokerage account with OAuth (approve, deny, replayed, forged and expired states, reconnect), background syncs by the BullMQ worker (retries with backoff, giving up, the scheduler, a revoked token), the synced holdings, and disconnecting. A fresh investor, against the Alpaca stand-in; needs the worker running.", investments),
+    folder("11. Wrap-up", "The 2FA brute-force limit, resetting the test users, and logout.", wrapUp),
   ],
 );
 

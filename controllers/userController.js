@@ -34,9 +34,9 @@ const PROFILE_COLUMNS = `
 const IDENTITY_FIELDS = ["first_name", "last_name", "date_of_birth"];
 const KYC_LOCKED_STATUSES = ["pending", "verified"];
 
-const MIN_AGE_YEARS = 18;
+export const MIN_AGE_YEARS = 18;
 
-function isAtLeastAge(dateString, years) {
+export function isAtLeastAge(dateString, years) {
   const dob = new Date(`${dateString}T00:00:00Z`);
   // an unparseable date is already reported by the format check
   if (Number.isNaN(dob.getTime())) return true;

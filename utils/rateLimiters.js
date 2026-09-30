@@ -74,3 +74,20 @@ export const moneyLimiter = rateLimit({
     );
   },
 });
+
+// Account-name lookups: enough for anyone sending money, too few to harvest
+// names by walking through account numbers. Per signed-in user.
+export const lookupLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  keyGenerator: (req) => req.user.sub,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req, res, next) => {
+    next(
+      new TooManyRequestsError({
+        message: "Too many account lookups. Please try again in a few minutes.",
+      }),
+    );
+  },
+});

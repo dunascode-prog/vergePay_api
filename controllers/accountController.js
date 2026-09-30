@@ -5,6 +5,7 @@ import { writeAudit } from "../utils/audit.js";
 import {
   BadRequestError,
   ConflictError,
+  KycRequiredError,
   NotFoundError,
   ValidationError,
 } from "../utils/errorStr.js";
@@ -99,6 +100,44 @@ export async function listAccounts(req, res) {
     [req.user.sub, validation.data.purpose ?? null],
   );
   return res.status(200).json({ data: result.rows });
+}
+
+const lookupSchema = z.strictObject({
+  account_number: z.string().trim().regex(/^\d{10}$/, "Enter a 10-digit account number."),
+});
+
+// GET /v1/accounts/lookup?account_number=   (User, KYC-verified, rate limited)
+// "Name enquiry": who holds a wallet, so a sender can check before paying.
+// Only open wallets are found, never system or loan accounts, and only
+// verified customers can ask, which with the rate limit keeps it from being
+// a way to collect names.
+export async function lookupAccountName(req, res) {
+  const validation = lookupSchema.safeParse(req.query);
+  if (!validation.success) {
+    throw new ValidationError({ details: validationDetails(validation.error) });
+  }
+  const me = await pool.query(`SELECT kyc_status FROM users WHERE user_id = $1`, [req.user.sub]);
+  if (me.rows[0]?.kyc_status !== "verified") throw new KycRequiredError();
+
+  const result = await pool.query(
+    `SELECT a.account_number, a.currency_code, a.user_id,
+            COALESCE(NULLIF(concat_ws(' ', u.first_name, u.last_name), ''), u.username) AS account_name
+     FROM account a
+     JOIN users u ON u.user_id = a.user_id
+     WHERE a.account_number = $1
+       AND NOT a.is_system
+       AND a.account_type = 'current'
+       AND a.account_status <> 'closed'`,
+    [validation.data.account_number],
+  );
+  const found = result.rows[0];
+  if (!found) throw new NotFoundError({ message: "No VergePay wallet has that account number." });
+  return res.status(200).json({
+    account_number: found.account_number,
+    account_name: found.account_name,
+    currency_code: found.currency_code,
+    is_own: found.user_id === req.user.sub,
+  });
 }
 
 export async function getAccount(req, res) {
