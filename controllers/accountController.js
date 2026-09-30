@@ -1,7 +1,6 @@
 import z from "zod";
 import { pool } from "../db/connectDB.js";
 import { withTransaction } from "../db/withTransaction.js";
-import { generateAccountNumber } from "../utils/accountNumber.js";
 import { writeAudit } from "../utils/audit.js";
 import {
   BadRequestError,
@@ -10,25 +9,39 @@ import {
   ValidationError,
 } from "../utils/errorStr.js";
 import { isUuid, validationDetails } from "../utils/validation.js";
+import {
+  ACCOUNT_COLUMNS,
+  findOpenAccount,
+  insertAccount,
+  lockUserForAccountOpening,
+} from "../services/accountOpening.js";
 
-const ACCOUNT_COLUMNS = `
-    account_id,
-    account_type,
-    account_number,
-    currency_code,
-    balance_minor,
-    income_minor,
-    total_savings_minor,
-    account_status,
-    created_at,
-    updated_at`;
+// A customer has at most two wallets: one personal and one business, both
+// current accounts. The other account types are opened for them by the
+// system: loan_holding by the loan system, investment_wallet when they link
+// a brokerage (brokerageController).
+const USER_OPENABLE_TYPES = ["current"];
+const WALLET_CURRENCIES = ["NGN", "USD"];
 
-// loan_holding accounts are opened by the loan system, never by a user.
-const USER_OPENABLE_TYPES = ["current", "savings", "investment_wallet"];
+// What a wallet is for, so personal and business money show apart. It
+// doesn't change how money moves, and it's fixed once the wallet is opened.
+const PURPOSES = ["personal", "business"];
 
 const openAccountSchema = z.strictObject({
-  account_type: z.enum(USER_OPENABLE_TYPES),
-  currency_code: z.string().trim().toUpperCase().length(3),
+  account_type: z.enum(USER_OPENABLE_TYPES, {
+    error:
+      "Only wallets (current accounts) can be opened: one personal and one business. Investment wallets are opened for you when you link a brokerage.",
+  }),
+  currency_code: z
+    .string()
+    .trim()
+    .toUpperCase()
+    .refine((code) => WALLET_CURRENCIES.includes(code), "Wallets can be in NGN or USD."),
+  purpose: z.enum(PURPOSES).default("personal"),
+});
+
+const listAccountsSchema = z.strictObject({
+  purpose: z.enum(PURPOSES).optional(),
 });
 
 const minorAmount = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
@@ -74,11 +87,16 @@ async function findOwnAccount(db, userId, accountId, { lock = false } = {}) {
 }
 
 export async function listAccounts(req, res) {
+  const validation = listAccountsSchema.safeParse(req.query);
+  if (!validation.success) {
+    throw new ValidationError({ details: validationDetails(validation.error) });
+  }
   const result = await pool.query(
     `SELECT ${ACCOUNT_COLUMNS} FROM account
      WHERE user_id = $1
+       AND ($2::account_purpose_enum IS NULL OR purpose = $2::account_purpose_enum)
      ORDER BY created_at`,
-    [req.user.sub],
+    [req.user.sub, validation.data.purpose ?? null],
   );
   return res.status(200).json({ data: result.rows });
 }
@@ -89,7 +107,7 @@ export async function getAccount(req, res) {
 }
 
 export async function openAccount(req, res) {
-  const { account_type, currency_code } = parseBody(openAccountSchema, req.body);
+  const { account_type, currency_code, purpose } = parseBody(openAccountSchema, req.body);
 
   const currency = await pool.query(`SELECT 1 FROM currencies WHERE code = $1`, [
     currency_code,
@@ -100,34 +118,25 @@ export async function openAccount(req, res) {
     });
   }
 
-  // Account numbers are random, so a collision is possible but rare; retry
-  // with a fresh number a few times before giving up.
-  for (let attempt = 1; attempt <= 5; attempt++) {
-    try {
-      const account = await withTransaction(async (client) => {
-        const result = await client.query(
-          `INSERT INTO account (user_id, account_type, account_number, currency_code)
-           VALUES ($1, $2, $3, $4)
-           RETURNING ${ACCOUNT_COLUMNS}`,
-          [req.user.sub, account_type, generateAccountNumber(), currency_code],
-        );
-        const created = result.rows[0];
-        await writeAudit(client, {
-          actorId: req.user.sub,
-          entityType: "account",
-          entityId: created.account_id,
-          action: "create",
-          after: created,
-        });
-        return created;
+  const account = await withTransaction(async (client) => {
+    // One personal and one business wallet per customer. The lock makes the
+    // check and the insert atomic, so two quick taps can't open two.
+    await lockUserForAccountOpening(client, req.user.sub);
+    const existing = await findOpenAccount(client, req.user.sub, account_type, purpose);
+    if (existing) {
+      throw new ConflictError({
+        message: `You already have a ${purpose} wallet (${existing.account_number}).`,
+        field: "purpose",
       });
-      return res.status(201).json(account);
-    } catch (err) {
-      const numberTaken =
-        err.code === "23505" && err.constraint === "account_account_number_key";
-      if (!numberTaken || attempt === 5) throw err;
     }
-  }
+    return insertAccount(client, {
+      userId: req.user.sub,
+      accountType: account_type,
+      currencyCode: currency_code,
+      purpose,
+    });
+  });
+  return res.status(201).json(account);
 }
 
 export async function updateAccount(req, res) {

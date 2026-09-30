@@ -5,6 +5,7 @@ import { withTransaction } from "../db/withTransaction.js";
 import env from "../env.js";
 import logger from "../logger.js";
 import * as alpaca from "../services/alpaca.js";
+import { findOpenAccount, insertAccount, lockUserForAccountOpening } from "../services/accountOpening.js";
 import { setSyncStatus } from "../services/brokerageSync.js";
 import { cancelLinkSync, enqueueLinkSync } from "../services/queue.js";
 import { destroySecret, storeSecret } from "../services/vault.js";
@@ -37,25 +38,40 @@ const startSchema = z.strictObject({
 const hash = (value) => crypto.createHash("sha256").update(value).digest("hex");
 const linkNotFound = () => new NotFoundError({ message: "Brokerage link not found." });
 
+// Customers don't open investment wallets themselves: the first time they
+// link a brokerage, one is opened for them, in the brokerage's currency.
+const INVESTMENT_WALLET_CURRENCY = "USD";
+
+async function ensureInvestmentWallet(userId) {
+  return withTransaction(async (client) => {
+    // Same lock as account opening, so two link attempts at once open one wallet.
+    await lockUserForAccountOpening(client, userId);
+    const existing = await findOpenAccount(client, userId, "investment_wallet");
+    if (existing) return existing;
+    return insertAccount(client, {
+      userId,
+      accountType: "investment_wallet",
+      currencyCode: INVESTMENT_WALLET_CURRENCY,
+      purpose: "personal",
+    });
+  });
+}
+
 // The investment_wallet account the holdings will sit in: the one named, or
-// the user's only one.
+// the user's own (opened now if they have none yet).
 async function investmentAccount(userId, accountId) {
+  if (!accountId) await ensureInvestmentWallet(userId);
   const result = await pool.query(
     `SELECT account_id, account_status FROM account
      WHERE user_id = $1 AND account_type = 'investment_wallet' AND NOT is_system
+       AND account_status <> 'closed'
        AND ($2::uuid IS NULL OR account_id = $2)
      ORDER BY created_at`,
     [userId, accountId ?? null],
   );
   if (result.rowCount === 0) {
     throw new ValidationError({
-      details: {
-        account_id: [
-          accountId
-            ? "Not one of your investment_wallet accounts."
-            : "Open an investment_wallet account first (POST /v1/accounts).",
-        ],
-      },
+      details: { account_id: ["Not one of your investment_wallet accounts."] },
     });
   }
   if (!accountId && result.rowCount > 1) {

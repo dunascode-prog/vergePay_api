@@ -960,7 +960,66 @@
       "description": "Opening, idempotency, editing, and the legal status transitions. As Tolu.",
       "item": [
         {
-          "name": "List my accounts",
+          "name": "New user: account holder",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"holderUsername\", \"holder_\" + Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/signup",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "signup"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{holderUsername}}\",\n  \"email\": \"{{holderUsername}}@vergepay.dev\",\n  \"password\": \"VergePay#Test2026\",\n  \"confirmPassword\": \"VergePay#Test2026\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "A fresh user for this run, so the account holder steps start with no wallets.\n\n**Expect:** 201"
+          }
+        },
+        {
+          "name": "Sign in as account holder",
           "event": [
             {
               "listen": "test",
@@ -975,7 +1034,58 @@
                   "const errorMessage = (j.error && j.error.message) || \"\";",
                   "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
                   "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
-                  "pm.test(\"returns a data array\", () => pm.expect(Array.isArray(j.data), \"returns a data array\").to.be.true);"
+                  "pm.test(\"session cookies set\", () => pm.expect(pm.cookies.has(\"access_token\") && pm.cookies.has(\"refresh_token\"), \"session cookies set\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/signin",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "signin"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{holderUsername}}@vergepay.dev\",\n  \"password\": \"VergePay#Test2026\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Switches the session to this run's account holder user.\n\n**Expect:** 200\n\n**Checks:**\n- session cookies set"
+          }
+        },
+        {
+          "name": "List my accounts (none yet)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"a new user has no wallets\", () => pm.expect(Array.isArray(j.data) && j.data.length === 0, \"a new user has no wallets\").to.be.true);"
                 ]
               }
             }
@@ -992,11 +1102,11 @@
                 "accounts"
               ]
             },
-            "description": "**Expect:** 200\n\n**Checks:**\n- returns a data array"
+            "description": "**Expect:** 200\n\n**Checks:**\n- a new user has no wallets"
           }
         },
         {
-          "name": "Open account",
+          "name": "Open my personal wallet",
           "event": [
             {
               "listen": "prerequest",
@@ -1022,6 +1132,7 @@
                   "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
                   "pm.test(\"10-digit account number\", () => pm.expect(/^\\d{10}$/.test(j.account_number), \"10-digit account number\").to.be.true);",
                   "pm.test(\"starts with zero balance\", () => pm.expect(j.balance_minor === 0, \"starts with zero balance\").to.be.true);",
+                  "pm.test(\"purpose defaults to personal\", () => pm.expect(j.purpose === \"personal\", \"purpose defaults to personal\").to.be.true);",
                   "try { pm.collectionVariables.set(\"accountId\", j.account_id); } catch (e) {}"
                 ]
               }
@@ -1050,14 +1161,14 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"account_type\": \"savings\",\n  \"currency_code\": \"NGN\"\n}",
+              "raw": "{\n  \"account_type\": \"current\",\n  \"currency_code\": \"NGN\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
                 }
               }
             },
-            "description": "Generates a fresh Idempotency-Key and saves the new account's id.\n\n**Expect:** 201\n\n**Checks:**\n- 10-digit account number\n- starts with zero balance"
+            "description": "Generates a fresh Idempotency-Key and saves the new account's id. purpose defaults to personal.\n\n**Expect:** 201\n\n**Checks:**\n- 10-digit account number\n- starts with zero balance\n- purpose defaults to personal"
           }
         },
         {
@@ -1105,7 +1216,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"account_type\": \"savings\",\n  \"currency_code\": \"NGN\"\n}",
+              "raw": "{\n  \"account_type\": \"current\",\n  \"currency_code\": \"NGN\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -1159,7 +1270,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"account_type\": \"current\",\n  \"currency_code\": \"NGN\"\n}",
+              "raw": "{\n  \"account_type\": \"current\",\n  \"currency_code\": \"USD\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -1208,7 +1319,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"account_type\": \"savings\",\n  \"currency_code\": \"NGN\"\n}",
+              "raw": "{\n  \"account_type\": \"current\",\n  \"currency_code\": \"NGN\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -1216,6 +1327,195 @@
               }
             },
             "description": "**Expect:** 400"
+          }
+        },
+        {
+          "name": "Open a second personal wallet",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"idempotencyKey\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 409\", () => pm.response.to.have.status(409));",
+                  "pm.test(\"already has one\", () => pm.expect(errorCode === \"CONFLICT\" && j.error.field === \"purpose\", \"already has one\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/accounts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "accounts"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"account_type\": \"current\",\n  \"currency_code\": \"USD\",\n  \"purpose\": \"personal\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "A customer has one personal and one business wallet at most.\n\n**Expect:** 409\n\n**Checks:**\n- already has one"
+          }
+        },
+        {
+          "name": "Open account - savings isn't user-openable",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"idempotencyKey\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 422\", () => pm.response.to.have.status(422));",
+                  "pm.test(\"account_type flagged\", () => pm.expect(Boolean(j.error.details.account_type), \"account_type flagged\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/accounts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "accounts"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"account_type\": \"savings\",\n  \"currency_code\": \"NGN\",\n  \"purpose\": \"business\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "**Expect:** 422\n\n**Checks:**\n- account_type flagged"
+          }
+        },
+        {
+          "name": "Open account - investment_wallet isn't user-openable",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"idempotencyKey\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 422\", () => pm.response.to.have.status(422));",
+                  "pm.test(\"account_type flagged\", () => pm.expect(Boolean(j.error.details.account_type), \"account_type flagged\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/accounts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "accounts"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"account_type\": \"investment_wallet\",\n  \"currency_code\": \"USD\",\n  \"purpose\": \"business\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Investment wallets are opened for the customer when they link a brokerage (folder 10).\n\n**Expect:** 422\n\n**Checks:**\n- account_type flagged"
           }
         },
         {
@@ -1270,7 +1570,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"account_type\": \"loan_holding\",\n  \"currency_code\": \"NGN\"\n}",
+              "raw": "{\n  \"account_type\": \"loan_holding\",\n  \"currency_code\": \"NGN\",\n  \"purpose\": \"business\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -1278,6 +1578,355 @@
               }
             },
             "description": "**Expect:** 422"
+          }
+        },
+        {
+          "name": "Open account - currency other than NGN or USD",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"idempotencyKey\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 422\", () => pm.response.to.have.status(422));",
+                  "pm.test(\"currency flagged\", () => pm.expect(Boolean(j.error.details.currency_code), \"currency flagged\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/accounts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "accounts"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"account_type\": \"current\",\n  \"currency_code\": \"GBP\",\n  \"purpose\": \"business\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "**Expect:** 422\n\n**Checks:**\n- currency flagged"
+          }
+        },
+        {
+          "name": "Open account - unknown purpose",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"idempotencyKey\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 422\", () => pm.response.to.have.status(422));",
+                  "pm.test(\"purpose flagged\", () => pm.expect(Boolean(j.error.details.purpose), \"purpose flagged\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/accounts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "accounts"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"account_type\": \"current\",\n  \"currency_code\": \"NGN\",\n  \"purpose\": \"family\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "**Expect:** 422\n\n**Checks:**\n- purpose flagged"
+          }
+        },
+        {
+          "name": "Concurrent: open the business wallet 3 times at once",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const url = pm.variables.replaceIn(\"{{baseUrl}}/accounts\");",
+                  "const codes = [];",
+                  "for (let i = 0; i < 3; i++) {",
+                  "  pm.sendRequest({",
+                  "    url, method: \"POST\",",
+                  "    header: Object.assign({ \"Content-Type\": \"application/json\", \"Idempotency-Key\": pm.variables.replaceIn(\"{{$guid}}\") }, {}),",
+                  "    body: { mode: \"raw\", raw: JSON.stringify({ account_type: \"current\", currency_code: \"USD\", purpose: \"business\" }) },",
+                  "  }, (err, res) => {",
+                  "    codes.push(err ? 0 : res.code);",
+                  "    if (codes.length === 3) {",
+                  "      codes.sort();",
+                  "      pm.collectionVariables.set(\"lastConcurrentCodes\", JSON.stringify(codes));",
+                  "      pm.test(\"exactly one business wallet is opened\" + \" (\" + codes.join(\", \") + \")\", () => pm.expect(codes.filter((x) => x === 201).length === 1 && codes.filter((x) => x === 409).length === 2).to.be.true);",
+                  "    }",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/users/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "users",
+                "me"
+              ]
+            },
+            "description": "Three taps at once, each with its own Idempotency-Key. Account opening locks the user's row, so the first opens the wallet and the other two see it and get 409.\n\nThe request itself is a harmless GET /users/me; its test script fires 3 POST /accounts requests at the same moment and counts the outcomes.\n\n**Expect:** 200\n\n**Checks:**\n- exactly one business wallet is opened"
+          }
+        },
+        {
+          "name": "List accounts - business only",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"exactly one business wallet, in USD\", () => pm.expect(j.data.length === 1 && j.data[0].purpose === \"business\" && j.data[0].currency_code === \"USD\", \"exactly one business wallet, in USD\").to.be.true);",
+                  "try { pm.collectionVariables.set(\"businessAccountId\", j.data[0] && j.data[0].account_id); } catch (e) {}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/accounts?purpose=business",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "accounts"
+              ],
+              "query": [
+                {
+                  "key": "purpose",
+                  "value": "business"
+                }
+              ]
+            },
+            "description": "**Expect:** 200\n\n**Checks:**\n- exactly one business wallet, in USD"
+          }
+        },
+        {
+          "name": "List accounts - unknown purpose filter",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 422\", () => pm.response.to.have.status(422));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/accounts?purpose=family",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "accounts"
+              ],
+              "query": [
+                {
+                  "key": "purpose",
+                  "value": "family"
+                }
+              ]
+            },
+            "description": "**Expect:** 422"
+          }
+        },
+        {
+          "name": "List my accounts (two wallets)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"one personal, one business\", () => pm.expect(j.data.length === 2 && j.data.some((a) => a.purpose === \"personal\") && j.data.some((a) => a.purpose === \"business\"), \"one personal, one business\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/accounts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "accounts"
+              ]
+            },
+            "description": "**Expect:** 200\n\n**Checks:**\n- one personal, one business"
+          }
+        },
+        {
+          "name": "Update - purpose isn't editable",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 422\", () => pm.response.to.have.status(422));",
+                  "pm.test(\"purpose flagged\", () => pm.expect(Boolean(j.error.details.purpose), \"purpose flagged\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/accounts/{{businessAccountId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "accounts",
+                "{{businessAccountId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"purpose\": \"personal\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "A wallet's purpose is fixed once it's opened.\n\n**Expect:** 422\n\n**Checks:**\n- purpose flagged"
           }
         },
         {
@@ -1608,6 +2257,69 @@
           }
         },
         {
+          "name": "Open a new personal wallet after closing the old one",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"idempotencyKey\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "pm.test(\"a different account\", () => pm.expect(j.account_id !== v(\"accountId\"), \"a different account\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/accounts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "accounts"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"account_type\": \"current\",\n  \"currency_code\": \"NGN\",\n  \"purpose\": \"personal\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "A closed wallet doesn't count, so its slot is free again.\n\n**Expect:** 201\n\n**Checks:**\n- a different account"
+          }
+        },
+        {
           "name": "Someone else's / unknown account",
           "event": [
             {
@@ -1650,6 +2362,116 @@
       "description": "Transfers through the double-entry ledger: idempotency (including a lost record), validation, history, pagination, reversal. As Tolu.",
       "item": [
         {
+          "name": "New user: sender",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"senderUsername\", \"sender_\" + Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/signup",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "signup"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{senderUsername}}\",\n  \"email\": \"{{senderUsername}}@vergepay.dev\",\n  \"password\": \"VergePay#Test2026\",\n  \"confirmPassword\": \"VergePay#Test2026\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "A fresh user for this run, so the sender steps start with no wallets.\n\n**Expect:** 201"
+          }
+        },
+        {
+          "name": "Sign in as sender",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"session cookies set\", () => pm.expect(pm.cookies.has(\"access_token\") && pm.cookies.has(\"refresh_token\"), \"session cookies set\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/signin",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "signin"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{senderUsername}}@vergepay.dev\",\n  \"password\": \"VergePay#Test2026\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Switches the session to this run's sender user.\n\n**Expect:** 200\n\n**Checks:**\n- session cookies set"
+          }
+        },
+        {
           "name": "Dev: mark me KYC-verified",
           "event": [
             {
@@ -1688,7 +2510,7 @@
           }
         },
         {
-          "name": "Open sender account",
+          "name": "Open sender account (personal wallet)",
           "event": [
             {
               "listen": "prerequest",
@@ -1740,7 +2562,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"account_type\": \"current\",\n  \"currency_code\": \"NGN\"\n}",
+              "raw": "{\n  \"account_type\": \"current\",\n  \"currency_code\": \"NGN\",\n  \"purpose\": \"personal\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -1751,7 +2573,7 @@
           }
         },
         {
-          "name": "Open receiver account",
+          "name": "Open receiver account (business wallet)",
           "event": [
             {
               "listen": "prerequest",
@@ -1804,7 +2626,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"account_type\": \"savings\",\n  \"currency_code\": \"NGN\"\n}",
+              "raw": "{\n  \"account_type\": \"current\",\n  \"currency_code\": \"NGN\",\n  \"purpose\": \"business\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -2866,7 +3688,155 @@
       "description": "Application, back-office approval and payout, the schedule, repayments (including a concurrent race), rejection. As Tolu, with the internal key for back-office calls.",
       "item": [
         {
-          "name": "Open loan account",
+          "name": "New user: borrower",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"borrowerUsername\", \"borrower_\" + Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/signup",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "signup"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{borrowerUsername}}\",\n  \"email\": \"{{borrowerUsername}}@vergepay.dev\",\n  \"password\": \"VergePay#Test2026\",\n  \"confirmPassword\": \"VergePay#Test2026\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "A fresh user for this run, so the borrower steps start with no wallets.\n\n**Expect:** 201"
+          }
+        },
+        {
+          "name": "Sign in as borrower",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"session cookies set\", () => pm.expect(pm.cookies.has(\"access_token\") && pm.cookies.has(\"refresh_token\"), \"session cookies set\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/signin",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "signin"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{borrowerUsername}}@vergepay.dev\",\n  \"password\": \"VergePay#Test2026\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Switches the session to this run's borrower user.\n\n**Expect:** 200\n\n**Checks:**\n- session cookies set"
+          }
+        },
+        {
+          "name": "Dev: mark me KYC-verified",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"verified\", () => pm.expect(j.kyc_status === \"verified\", \"verified\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/dev/kyc/verify",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "dev",
+                "kyc",
+                "verify"
+              ]
+            },
+            "description": "Development only. Money movement needs kyc_status = verified.\n\n**Expect:** 200\n\n**Checks:**\n- verified"
+          }
+        },
+        {
+          "name": "Open loan account (personal wallet)",
           "event": [
             {
               "listen": "prerequest",
@@ -2918,7 +3888,70 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"account_type\": \"current\",\n  \"currency_code\": \"NGN\"\n}",
+              "raw": "{\n  \"account_type\": \"current\",\n  \"currency_code\": \"NGN\",\n  \"purpose\": \"personal\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "**Expect:** 201"
+          }
+        },
+        {
+          "name": "Open the repaying account (business wallet)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"idempotencyKey\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "try { pm.collectionVariables.set(\"receiverAccountId\", j.account_id); } catch (e) {}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/accounts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "accounts"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"account_type\": \"current\",\n  \"currency_code\": \"NGN\",\n  \"purpose\": \"business\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -5116,14 +6149,14 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"account_id\": \"{{senderAccountId}}\",\n  \"loan_type\": \"personal\",\n  \"requested_amount_minor\": 1500000,\n  \"currency_code\": \"NGN\",\n  \"term_months\": 3,\n  \"purpose\": \"Laptop for freelance work\"\n}",
+              "raw": "{\n  \"account_id\": \"{{receiverAccountId}}\",\n  \"loan_type\": \"personal\",\n  \"requested_amount_minor\": 1500000,\n  \"currency_code\": \"NGN\",\n  \"term_months\": 3,\n  \"purpose\": \"Laptop for freelance work\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
                 }
               }
             },
-            "description": "**Expect:** 202"
+            "description": "Into the borrower's other wallet (the first loan's account is closed now).\n\n**Expect:** 202"
           }
         },
         {
@@ -5378,7 +6411,66 @@
       "description": "Tolu bills Ada: validation, visibility, payment, cancellation, overdue, the close guard, a concurrent payment race, and full refunds (including a concurrent refund race).",
       "item": [
         {
-          "name": "Sign in as Ada",
+          "name": "New user: USD account holder",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"usdholderUsername\", \"usdholder_\" + Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/signup",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "signup"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{usdholderUsername}}\",\n  \"email\": \"{{usdholderUsername}}@vergepay.dev\",\n  \"password\": \"VergePay#Test2026\",\n  \"confirmPassword\": \"VergePay#Test2026\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "A fresh user for this run, so the USD account holder steps start with no wallets.\n\n**Expect:** 201"
+          }
+        },
+        {
+          "name": "Sign in as USD account holder",
           "event": [
             {
               "listen": "test",
@@ -5418,183 +6510,18 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"email\": \"{{adaEmail}}\",\n  \"password\": \"{{adaPassword}}\"\n}",
+              "raw": "{\n  \"email\": \"{{usdholderUsername}}@vergepay.dev\",\n  \"password\": \"VergePay#Test2026\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
                 }
               }
             },
-            "description": "Switches the session (Postman's cookie jar) to ada_login.\n\n**Expect:** 200\n\n**Checks:**\n- session cookies set"
+            "description": "Switches the session to this run's USD account holder user.\n\n**Expect:** 200\n\n**Checks:**\n- session cookies set"
           }
         },
         {
-          "name": "Dev: mark me KYC-verified",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
-                  "const v = (k) => pm.collectionVariables.get(k);",
-                  "const n = (k) => Number(pm.collectionVariables.get(k));",
-                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
-                  "const errorCode = j.error && j.error.code;",
-                  "const errorMessage = (j.error && j.error.message) || \"\";",
-                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
-                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
-                  "pm.test(\"verified\", () => pm.expect(j.kyc_status === \"verified\", \"verified\").to.be.true);"
-                ]
-              }
-            }
-          ],
-          "request": {
-            "method": "POST",
-            "header": [],
-            "url": {
-              "raw": "{{baseUrl}}/dev/kyc/verify",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "dev",
-                "kyc",
-                "verify"
-              ]
-            },
-            "description": "Development only. Money movement needs kyc_status = verified.\n\n**Expect:** 200\n\n**Checks:**\n- verified"
-          }
-        },
-        {
-          "name": "Ada: open payer account",
-          "event": [
-            {
-              "listen": "prerequest",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.collectionVariables.set(\"idempotencyKey\", pm.variables.replaceIn(\"{{$guid}}\"));"
-                ]
-              }
-            },
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
-                  "const v = (k) => pm.collectionVariables.get(k);",
-                  "const n = (k) => Number(pm.collectionVariables.get(k));",
-                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
-                  "const errorCode = j.error && j.error.code;",
-                  "const errorMessage = (j.error && j.error.message) || \"\";",
-                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
-                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
-                  "try { pm.collectionVariables.set(\"payerAccountId\", j.account_id); } catch (e) {}",
-                  "try { pm.collectionVariables.set(\"payerAccountNumber\", j.account_number); } catch (e) {}"
-                ]
-              }
-            }
-          ],
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              },
-              {
-                "key": "Idempotency-Key",
-                "value": "{{idempotencyKey}}"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/accounts",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "accounts"
-              ]
-            },
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"account_type\": \"current\",\n  \"currency_code\": \"NGN\"\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            },
-            "description": "**Expect:** 201"
-          }
-        },
-        {
-          "name": "Ada: open an empty account",
-          "event": [
-            {
-              "listen": "prerequest",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.collectionVariables.set(\"idempotencyKey\", pm.variables.replaceIn(\"{{$guid}}\"));"
-                ]
-              }
-            },
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
-                  "const v = (k) => pm.collectionVariables.get(k);",
-                  "const n = (k) => Number(pm.collectionVariables.get(k));",
-                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
-                  "const errorCode = j.error && j.error.code;",
-                  "const errorMessage = (j.error && j.error.message) || \"\";",
-                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
-                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
-                  "try { pm.collectionVariables.set(\"payerEmptyAccountId\", j.account_id); } catch (e) {}"
-                ]
-              }
-            }
-          ],
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              },
-              {
-                "key": "Idempotency-Key",
-                "value": "{{idempotencyKey}}"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/accounts",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "accounts"
-              ]
-            },
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"account_type\": \"current\",\n  \"currency_code\": \"NGN\"\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            },
-            "description": "**Expect:** 201"
-          }
-        },
-        {
-          "name": "Ada: open a USD account",
+          "name": "USD holder: open a USD wallet",
           "event": [
             {
               "listen": "prerequest",
@@ -5647,7 +6574,282 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"account_type\": \"current\",\n  \"currency_code\": \"USD\"\n}",
+              "raw": "{\n  \"account_type\": \"current\",\n  \"currency_code\": \"USD\",\n  \"purpose\": \"personal\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "**Expect:** 201"
+          }
+        },
+        {
+          "name": "New user: payer (Ada)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"payerUsername\", \"payer_\" + Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/signup",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "signup"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{payerUsername}}\",\n  \"email\": \"{{payerUsername}}@vergepay.dev\",\n  \"password\": \"VergePay#Test2026\",\n  \"confirmPassword\": \"VergePay#Test2026\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "A fresh user for this run, so the payer (Ada) steps start with no wallets.\n\n**Expect:** 201"
+          }
+        },
+        {
+          "name": "Sign in as payer (Ada)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"session cookies set\", () => pm.expect(pm.cookies.has(\"access_token\") && pm.cookies.has(\"refresh_token\"), \"session cookies set\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/signin",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "signin"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{payerUsername}}@vergepay.dev\",\n  \"password\": \"VergePay#Test2026\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Switches the session to this run's payer (Ada) user.\n\n**Expect:** 200\n\n**Checks:**\n- session cookies set"
+          }
+        },
+        {
+          "name": "Dev: mark me KYC-verified",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"verified\", () => pm.expect(j.kyc_status === \"verified\", \"verified\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/dev/kyc/verify",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "dev",
+                "kyc",
+                "verify"
+              ]
+            },
+            "description": "Development only. Money movement needs kyc_status = verified.\n\n**Expect:** 200\n\n**Checks:**\n- verified"
+          }
+        },
+        {
+          "name": "Ada: open payer account (personal wallet)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"idempotencyKey\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "try { pm.collectionVariables.set(\"payerAccountId\", j.account_id); } catch (e) {}",
+                  "try { pm.collectionVariables.set(\"payerAccountNumber\", j.account_number); } catch (e) {}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/accounts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "accounts"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"account_type\": \"current\",\n  \"currency_code\": \"NGN\",\n  \"purpose\": \"personal\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "**Expect:** 201"
+          }
+        },
+        {
+          "name": "Ada: open an empty account (business wallet)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"idempotencyKey\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "try { pm.collectionVariables.set(\"payerEmptyAccountId\", j.account_id); } catch (e) {}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/accounts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "accounts"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"account_type\": \"current\",\n  \"currency_code\": \"NGN\",\n  \"purpose\": \"business\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -5723,7 +6925,66 @@
           }
         },
         {
-          "name": "Sign in as Tolu",
+          "name": "New user: issuer (Tolu)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"issuerUsername\", \"issuer_\" + Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/signup",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "signup"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{issuerUsername}}\",\n  \"email\": \"{{issuerUsername}}@vergepay.dev\",\n  \"password\": \"VergePay#Test2026\",\n  \"confirmPassword\": \"VergePay#Test2026\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "A fresh user for this run, so the issuer (Tolu) steps start with no wallets.\n\n**Expect:** 201"
+          }
+        },
+        {
+          "name": "Sign in as issuer (Tolu)",
           "event": [
             {
               "listen": "test",
@@ -5763,18 +7024,56 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"email\": \"{{toluEmail}}\",\n  \"password\": \"{{toluPassword}}\"\n}",
+              "raw": "{\n  \"email\": \"{{issuerUsername}}@vergepay.dev\",\n  \"password\": \"VergePay#Test2026\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
                 }
               }
             },
-            "description": "Switches the session (Postman's cookie jar) to tolu_login.\n\n**Expect:** 200\n\n**Checks:**\n- session cookies set"
+            "description": "Switches the session to this run's issuer (Tolu) user.\n\n**Expect:** 200\n\n**Checks:**\n- session cookies set"
           }
         },
         {
-          "name": "Tolu: open issuing account",
+          "name": "Dev: mark me KYC-verified",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"verified\", () => pm.expect(j.kyc_status === \"verified\", \"verified\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/dev/kyc/verify",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "dev",
+                "kyc",
+                "verify"
+              ]
+            },
+            "description": "Development only. Money movement needs kyc_status = verified.\n\n**Expect:** 200\n\n**Checks:**\n- verified"
+          }
+        },
+        {
+          "name": "Tolu: open issuing account (personal wallet)",
           "event": [
             {
               "listen": "prerequest",
@@ -5827,7 +7126,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"account_type\": \"current\",\n  \"currency_code\": \"NGN\"\n}",
+              "raw": "{\n  \"account_type\": \"current\",\n  \"currency_code\": \"NGN\",\n  \"purpose\": \"personal\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -5838,7 +7137,7 @@
           }
         },
         {
-          "name": "Tolu: open a second issuing account",
+          "name": "Tolu: open a second issuing account (business wallet)",
           "event": [
             {
               "listen": "prerequest",
@@ -5890,7 +7189,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"account_type\": \"current\",\n  \"currency_code\": \"NGN\"\n}",
+              "raw": "{\n  \"account_type\": \"current\",\n  \"currency_code\": \"NGN\",\n  \"purpose\": \"business\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -6922,7 +8221,7 @@
           }
         },
         {
-          "name": "Sign in as Ada",
+          "name": "Sign in as payer (Ada)",
           "event": [
             {
               "listen": "test",
@@ -6962,14 +8261,14 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"email\": \"{{adaEmail}}\",\n  \"password\": \"{{adaPassword}}\"\n}",
+              "raw": "{\n  \"email\": \"{{payerUsername}}@vergepay.dev\",\n  \"password\": \"VergePay#Test2026\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
                 }
               }
             },
-            "description": "Switches the session (Postman's cookie jar) to ada_login.\n\n**Expect:** 200\n\n**Checks:**\n- session cookies set"
+            "description": "Switches the session to this run's payer (Ada) user.\n\n**Expect:** 200\n\n**Checks:**\n- session cookies set"
           }
         },
         {
@@ -7709,7 +9008,7 @@
           }
         },
         {
-          "name": "Sign in as Tolu",
+          "name": "Sign in as issuer (Tolu)",
           "event": [
             {
               "listen": "test",
@@ -7749,14 +9048,14 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"email\": \"{{toluEmail}}\",\n  \"password\": \"{{toluPassword}}\"\n}",
+              "raw": "{\n  \"email\": \"{{issuerUsername}}@vergepay.dev\",\n  \"password\": \"VergePay#Test2026\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
                 }
               }
             },
-            "description": "Switches the session (Postman's cookie jar) to tolu_login.\n\n**Expect:** 200\n\n**Checks:**\n- session cookies set"
+            "description": "Switches the session to this run's issuer (Tolu) user.\n\n**Expect:** 200\n\n**Checks:**\n- session cookies set"
           }
         },
         {
@@ -8309,7 +9608,7 @@
           }
         },
         {
-          "name": "Sign in as Ada",
+          "name": "Sign in as payer (Ada)",
           "event": [
             {
               "listen": "test",
@@ -8349,14 +9648,14 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"email\": \"{{adaEmail}}\",\n  \"password\": \"{{adaPassword}}\"\n}",
+              "raw": "{\n  \"email\": \"{{payerUsername}}@vergepay.dev\",\n  \"password\": \"VergePay#Test2026\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
                 }
               }
             },
-            "description": "Switches the session (Postman's cookie jar) to ada_login.\n\n**Expect:** 200\n\n**Checks:**\n- session cookies set"
+            "description": "Switches the session to this run's payer (Ada) user.\n\n**Expect:** 200\n\n**Checks:**\n- session cookies set"
           }
         },
         {
@@ -8707,7 +10006,7 @@
           }
         },
         {
-          "name": "Sign in as Tolu",
+          "name": "Sign in as issuer (Tolu)",
           "event": [
             {
               "listen": "test",
@@ -8747,14 +10046,14 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"email\": \"{{toluEmail}}\",\n  \"password\": \"{{toluPassword}}\"\n}",
+              "raw": "{\n  \"email\": \"{{issuerUsername}}@vergepay.dev\",\n  \"password\": \"VergePay#Test2026\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
                 }
               }
             },
-            "description": "Switches the session (Postman's cookie jar) to tolu_login.\n\n**Expect:** 200\n\n**Checks:**\n- session cookies set"
+            "description": "Switches the session to this run's issuer (Tolu) user.\n\n**Expect:** 200\n\n**Checks:**\n- session cookies set"
           }
         },
         {
@@ -9439,7 +10738,7 @@
           }
         },
         {
-          "name": "Tolu: open a sink account",
+          "name": "Tolu: open a sink account (business wallet; the second one was closed)",
           "event": [
             {
               "listen": "prerequest",
@@ -9491,7 +10790,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"account_type\": \"current\",\n  \"currency_code\": \"NGN\"\n}",
+              "raw": "{\n  \"account_type\": \"current\",\n  \"currency_code\": \"NGN\",\n  \"purpose\": \"business\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -9804,7 +11103,7 @@
           }
         },
         {
-          "name": "Sign in as Ada",
+          "name": "Sign in as payer (Ada)",
           "event": [
             {
               "listen": "test",
@@ -9844,14 +11143,14 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"email\": \"{{adaEmail}}\",\n  \"password\": \"{{adaPassword}}\"\n}",
+              "raw": "{\n  \"email\": \"{{payerUsername}}@vergepay.dev\",\n  \"password\": \"VergePay#Test2026\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
                 }
               }
             },
-            "description": "Switches the session (Postman's cookie jar) to ada_login.\n\n**Expect:** 200\n\n**Checks:**\n- session cookies set"
+            "description": "Switches the session to this run's payer (Ada) user.\n\n**Expect:** 200\n\n**Checks:**\n- session cookies set"
           }
         },
         {
@@ -10220,6 +11519,57 @@
       "name": "7. Two-factor authentication",
       "description": "TOTP setup, the sign-in challenge, one-time codes and the recent-confirmation rule. As Ada. Codes are computed in Postman.",
       "item": [
+        {
+          "name": "Sign in as Ada",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"session cookies set\", () => pm.expect(pm.cookies.has(\"access_token\") && pm.cookies.has(\"refresh_token\"), \"session cookies set\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/signin",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "signin"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{adaEmail}}\",\n  \"password\": \"{{adaPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Switches the session (Postman's cookie jar) to ada_login.\n\n**Expect:** 200\n\n**Checks:**\n- session cookies set"
+          }
+        },
         {
           "name": "Disable 2FA without a recent code",
           "event": [
@@ -11324,6 +12674,116 @@
           }
         },
         {
+          "name": "New user: card holder (Ada)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"cardholderUsername\", \"cardholder_\" + Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/signup",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "signup"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{cardholderUsername}}\",\n  \"email\": \"{{cardholderUsername}}@vergepay.dev\",\n  \"password\": \"VergePay#Test2026\",\n  \"confirmPassword\": \"VergePay#Test2026\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "A fresh user for this run, so the card holder (Ada) steps start with no wallets.\n\n**Expect:** 201"
+          }
+        },
+        {
+          "name": "Sign in as card holder (Ada)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"session cookies set\", () => pm.expect(pm.cookies.has(\"access_token\") && pm.cookies.has(\"refresh_token\"), \"session cookies set\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/signin",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "signin"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{cardholderUsername}}@vergepay.dev\",\n  \"password\": \"VergePay#Test2026\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Switches the session to this run's card holder (Ada) user.\n\n**Expect:** 200\n\n**Checks:**\n- session cookies set"
+          }
+        },
+        {
           "name": "Dev: mark me KYC-verified",
           "event": [
             {
@@ -11362,7 +12822,7 @@
           }
         },
         {
-          "name": "Open the card account",
+          "name": "Open the card account (personal wallet)",
           "event": [
             {
               "listen": "prerequest",
@@ -11414,7 +12874,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"account_type\": \"current\",\n  \"currency_code\": \"NGN\"\n}",
+              "raw": "{\n  \"account_type\": \"current\",\n  \"currency_code\": \"NGN\",\n  \"purpose\": \"personal\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -11425,7 +12885,7 @@
           }
         },
         {
-          "name": "Open a second account",
+          "name": "Open a second account (business wallet)",
           "event": [
             {
               "listen": "prerequest",
@@ -11477,70 +12937,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"account_type\": \"current\",\n  \"currency_code\": \"NGN\"\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            },
-            "description": "**Expect:** 201"
-          }
-        },
-        {
-          "name": "Open a USD account",
-          "event": [
-            {
-              "listen": "prerequest",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.collectionVariables.set(\"idempotencyKey\", pm.variables.replaceIn(\"{{$guid}}\"));"
-                ]
-              }
-            },
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
-                  "const v = (k) => pm.collectionVariables.get(k);",
-                  "const n = (k) => Number(pm.collectionVariables.get(k));",
-                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
-                  "const errorCode = j.error && j.error.code;",
-                  "const errorMessage = (j.error && j.error.message) || \"\";",
-                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
-                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
-                  "try { pm.collectionVariables.set(\"cardUsdAccountId\", j.account_id); } catch (e) {}"
-                ]
-              }
-            }
-          ],
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              },
-              {
-                "key": "Idempotency-Key",
-                "value": "{{idempotencyKey}}"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/accounts",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "accounts"
-              ]
-            },
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"account_type\": \"current\",\n  \"currency_code\": \"USD\"\n}",
+              "raw": "{\n  \"account_type\": \"current\",\n  \"currency_code\": \"NGN\",\n  \"purpose\": \"business\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -11786,68 +13183,6 @@
               }
             },
             "description": "**Expect:** 400"
-          }
-        },
-        {
-          "name": "Add a card to a USD account",
-          "event": [
-            {
-              "listen": "prerequest",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.collectionVariables.set(\"idempotencyKey\", pm.variables.replaceIn(\"{{$guid}}\"));"
-                ]
-              }
-            },
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
-                  "const v = (k) => pm.collectionVariables.get(k);",
-                  "const n = (k) => Number(pm.collectionVariables.get(k));",
-                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
-                  "const errorCode = j.error && j.error.code;",
-                  "const errorMessage = (j.error && j.error.message) || \"\";",
-                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
-                  "pm.test(\"status is 422\", () => pm.response.to.have.status(422));"
-                ]
-              }
-            }
-          ],
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              },
-              {
-                "key": "Idempotency-Key",
-                "value": "{{idempotencyKey}}"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/cards",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "cards"
-              ]
-            },
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"account_id\": \"{{cardUsdAccountId}}\"\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            },
-            "description": "**Expect:** 422"
           }
         },
         {
@@ -15654,57 +16989,6 @@
           }
         },
         {
-          "name": "Bank-transfer number for a USD account",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
-                  "const v = (k) => pm.collectionVariables.get(k);",
-                  "const n = (k) => Number(pm.collectionVariables.get(k));",
-                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
-                  "const errorCode = j.error && j.error.code;",
-                  "const errorMessage = (j.error && j.error.message) || \"\";",
-                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
-                  "pm.test(\"status is 422\", () => pm.response.to.have.status(422));"
-                ]
-              }
-            }
-          ],
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/accounts/{{cardUsdAccountId}}/virtual-account",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "accounts",
-                "{{cardUsdAccountId}}",
-                "virtual-account"
-              ]
-            },
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"bvn\": \"22222223883\"\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            },
-            "description": "**Expect:** 422"
-          }
-        },
-        {
           "name": "Bank-transfer number - processor rejects the BVN",
           "event": [
             {
@@ -16563,6 +17847,219 @@
           }
         },
         {
+          "name": "Close the card account now",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/accounts/{{cardAccountId}}/close",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "accounts",
+                "{{cardAccountId}}",
+                "close"
+              ]
+            },
+            "description": "The card is gone and the money was moved out, so it can close. That frees the personal-wallet slot for the USD checks.\n\n**Expect:** 200"
+          }
+        },
+        {
+          "name": "Open a USD personal wallet",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"idempotencyKey\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "try { pm.collectionVariables.set(\"cardUsdAccountId\", j.account_id); } catch (e) {}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/accounts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "accounts"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"account_type\": \"current\",\n  \"currency_code\": \"USD\",\n  \"purpose\": \"personal\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "**Expect:** 201"
+          }
+        },
+        {
+          "name": "Add a card to a USD account",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"idempotencyKey\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 422\", () => pm.response.to.have.status(422));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/cards",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "cards"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"account_id\": \"{{cardUsdAccountId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Cards fund NGN wallets only.\n\n**Expect:** 422"
+          }
+        },
+        {
+          "name": "Bank-transfer number for a USD account",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 422\", () => pm.response.to.have.status(422));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/accounts/{{cardUsdAccountId}}/virtual-account",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "accounts",
+                "{{cardUsdAccountId}}",
+                "virtual-account"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"bvn\": \"22222223883\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "**Expect:** 422"
+          }
+        },
+        {
           "name": "Charge a removed card",
           "event": [
             {
@@ -16813,6 +18310,215 @@
               }
             },
             "description": "**Expect:** 200"
+          }
+        },
+        {
+          "name": "New user: investor",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"investorUsername\", \"investor_\" + Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/signup",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "signup"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{investorUsername}}\",\n  \"email\": \"{{investorUsername}}@vergepay.dev\",\n  \"password\": \"VergePay#Test2026\",\n  \"confirmPassword\": \"VergePay#Test2026\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "A fresh user for this run, so the investor steps start with no wallets.\n\n**Expect:** 201"
+          }
+        },
+        {
+          "name": "Sign in as investor",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"session cookies set\", () => pm.expect(pm.cookies.has(\"access_token\") && pm.cookies.has(\"refresh_token\"), \"session cookies set\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/signin",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "signin"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{investorUsername}}@vergepay.dev\",\n  \"password\": \"VergePay#Test2026\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Switches the session to this run's investor user.\n\n**Expect:** 200\n\n**Checks:**\n- session cookies set"
+          }
+        },
+        {
+          "name": "Open a personal wallet",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"idempotencyKey\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "try { pm.collectionVariables.set(\"investorWalletId\", j.account_id); } catch (e) {}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/accounts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "accounts"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"account_type\": \"current\",\n  \"currency_code\": \"NGN\",\n  \"purpose\": \"personal\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "**Expect:** 201"
+          }
+        },
+        {
+          "name": "No investment wallet yet",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"none\", () => pm.expect(!j.data.some((a) => a.account_type === \"investment_wallet\"), \"none\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/accounts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "accounts"
+              ]
+            },
+            "description": "Customers don't open investment wallets; one is opened for them when they link a brokerage.\n\n**Expect:** 200\n\n**Checks:**\n- none"
           }
         },
         {
@@ -17079,77 +18785,14 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"provider_name\": \"alpaca\",\n  \"account_id\": \"{{cardAccount2Id}}\"\n}",
+              "raw": "{\n  \"provider_name\": \"alpaca\",\n  \"account_id\": \"{{investorWalletId}}\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
                 }
               }
             },
-            "description": "Holdings sit in an investment_wallet account.\n\n**Expect:** 422"
-          }
-        },
-        {
-          "name": "Open an investment wallet",
-          "event": [
-            {
-              "listen": "prerequest",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.collectionVariables.set(\"idempotencyKey\", pm.variables.replaceIn(\"{{$guid}}\"));"
-                ]
-              }
-            },
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
-                  "const v = (k) => pm.collectionVariables.get(k);",
-                  "const n = (k) => Number(pm.collectionVariables.get(k));",
-                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
-                  "const errorCode = j.error && j.error.code;",
-                  "const errorMessage = (j.error && j.error.message) || \"\";",
-                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
-                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
-                  "try { pm.collectionVariables.set(\"investmentAccountId\", j.account_id); } catch (e) {}"
-                ]
-              }
-            }
-          ],
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              },
-              {
-                "key": "Idempotency-Key",
-                "value": "{{idempotencyKey}}"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/accounts",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "accounts"
-              ]
-            },
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"account_type\": \"investment_wallet\",\n  \"currency_code\": \"USD\"\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            },
-            "description": "**Expect:** 201"
+            "description": "Holdings sit in an investment_wallet account, not a wallet.\n\n**Expect:** 422"
           }
         },
         {
@@ -17195,7 +18838,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"provider_name\": \"alpaca\",\n  \"account_id\": \"{{investmentAccountId}}\"\n}",
+              "raw": "{\n  \"provider_name\": \"alpaca\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -17203,6 +18846,43 @@
               }
             },
             "description": "**Expect:** 200\n\n**Checks:**\n- an Alpaca authorization URL and a state\n- asks for the paper account, with our callback"
+          }
+        },
+        {
+          "name": "An investment wallet was opened for me",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"exactly one, in USD\", () => pm.expect(j.data.filter((a) => a.account_type === \"investment_wallet\").length === 1 && j.data.find((a) => a.account_type === \"investment_wallet\").currency_code === \"USD\", \"exactly one, in USD\").to.be.true);",
+                  "try { pm.collectionVariables.set(\"investmentAccountId\", j.data.find((a) => a.account_type === \"investment_wallet\").account_id); } catch (e) {}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/accounts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "accounts"
+              ]
+            },
+            "description": "Starting the connection opened the customer's investment wallet (USD), outside the two-wallet limit.\n\n**Expect:** 200\n\n**Checks:**\n- exactly one, in USD"
           }
         },
         {
@@ -18714,70 +20394,7 @@
           }
         },
         {
-          "name": "Open a second investment wallet (reconnect into it)",
-          "event": [
-            {
-              "listen": "prerequest",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.collectionVariables.set(\"idempotencyKey\", pm.variables.replaceIn(\"{{$guid}}\"));"
-                ]
-              }
-            },
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
-                  "const v = (k) => pm.collectionVariables.get(k);",
-                  "const n = (k) => Number(pm.collectionVariables.get(k));",
-                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
-                  "const errorCode = j.error && j.error.code;",
-                  "const errorMessage = (j.error && j.error.message) || \"\";",
-                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
-                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
-                  "try { pm.collectionVariables.set(\"investmentAccount2Id\", j.account_id); } catch (e) {}"
-                ]
-              }
-            }
-          ],
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              },
-              {
-                "key": "Idempotency-Key",
-                "value": "{{idempotencyKey}}"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/accounts",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "accounts"
-              ]
-            },
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"account_type\": \"investment_wallet\",\n  \"currency_code\": \"USD\"\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            },
-            "description": "**Expect:** 201"
-          }
-        },
-        {
-          "name": "Reconnect into the second wallet",
+          "name": "Reconnect",
           "event": [
             {
               "listen": "test",
@@ -18817,7 +20434,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"provider_name\": \"alpaca\",\n  \"account_id\": \"{{investmentAccount2Id}}\"\n}",
+              "raw": "{\n  \"provider_name\": \"alpaca\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -18910,10 +20527,10 @@
                   "const started = Date.now();",
                   "const poll = () => pm.sendRequest({ url: pm.variables.replaceIn(\"{{baseUrl}}/brokerage-links\"), method: \"GET\" }, (err, res) => {",
                   "  const link = (res.json().data || []).find((l) => l.link_id === linkId);",
-                  "  const done = link && (link.link_status === \"active\" && link.last_sync_status === \"succeeded\" && link.account_id === v(\"investmentAccount2Id\"));",
+                  "  const done = link && (link.link_status === \"active\" && link.last_sync_status === \"succeeded\" && link.account_id === v(\"investmentAccountId\"));",
                   "  if (!done && Date.now() - started < 30000) return setTimeout(poll, 500);",
                   "  pm.collectionVariables.set(\"lastLinkState\", JSON.stringify(link || null));",
-                  "  pm.test(\"active, synced, now in the second wallet\", () => pm.expect(Boolean(link && (link.link_status === \"active\" && link.last_sync_status === \"succeeded\" && link.account_id === v(\"investmentAccount2Id\"))), JSON.stringify(link)).to.be.true);",
+                  "  pm.test(\"active, synced, same wallet\", () => pm.expect(Boolean(link && (link.link_status === \"active\" && link.last_sync_status === \"succeeded\" && link.account_id === v(\"investmentAccountId\"))), JSON.stringify(link)).to.be.true);",
                   "});",
                   "poll();"
                 ]
@@ -18932,11 +20549,11 @@
                 "brokerage-links"
               ]
             },
-            "description": "Polls the link (up to 30 seconds) until the background worker is done with it.\n\n**Expect:** 200\n\n**Checks:**\n- active, synced, now in the second wallet"
+            "description": "Polls the link (up to 30 seconds) until the background worker is done with it.\n\n**Expect:** 200\n\n**Checks:**\n- active, synced, same wallet"
           }
         },
         {
-          "name": "The holdings moved to the second wallet",
+          "name": "The holdings are back in the wallet",
           "event": [
             {
               "listen": "test",
@@ -18960,48 +20577,6 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{baseUrl}}/holdings?account_id={{investmentAccount2Id}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "holdings"
-              ],
-              "query": [
-                {
-                  "key": "account_id",
-                  "value": "{{investmentAccount2Id}}"
-                }
-              ]
-            },
-            "description": "Regression check, found with real Alpaca data: re-linking into another wallet used to leave the synced holdings in the old one.\n\n**Expect:** 200\n\n**Checks:**\n- the 2 holdings are here"
-          }
-        },
-        {
-          "name": "…and nothing is left in the first",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
-                  "const v = (k) => pm.collectionVariables.get(k);",
-                  "const n = (k) => Number(pm.collectionVariables.get(k));",
-                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
-                  "const errorCode = j.error && j.error.code;",
-                  "const errorMessage = (j.error && j.error.message) || \"\";",
-                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
-                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
-                  "pm.test(\"none\", () => pm.expect(j.data.length === 0, \"none\").to.be.true);"
-                ]
-              }
-            }
-          ],
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
               "raw": "{{baseUrl}}/holdings?account_id={{investmentAccountId}}",
               "host": [
                 "{{baseUrl}}"
@@ -19016,7 +20591,43 @@
                 }
               ]
             },
-            "description": "**Expect:** 200\n\n**Checks:**\n- none"
+            "description": "**Expect:** 200\n\n**Checks:**\n- the 2 holdings are here"
+          }
+        },
+        {
+          "name": "Still one investment wallet",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"exactly one\", () => pm.expect(j.data.filter((a) => a.account_type === \"investment_wallet\").length === 1, \"exactly one\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/accounts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "accounts"
+              ]
+            },
+            "description": "Reconnecting reuses the customer's investment wallet rather than opening another.\n\n**Expect:** 200\n\n**Checks:**\n- exactly one"
           }
         },
         {
@@ -19110,7 +20721,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"provider_name\": \"alpaca\",\n  \"account_id\": \"{{investmentAccountId}}\"\n}",
+              "raw": "{\n  \"provider_name\": \"alpaca\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -19274,7 +20885,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"provider_name\": \"alpaca\",\n  \"account_id\": \"{{investmentAccountId}}\"\n}",
+              "raw": "{\n  \"provider_name\": \"alpaca\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -19618,7 +21229,7 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{baseUrl}}/holdings?account_id={{investmentAccount2Id}}",
+              "raw": "{{baseUrl}}/holdings?account_id={{investmentAccountId}}",
               "host": [
                 "{{baseUrl}}"
               ],
@@ -19628,7 +21239,7 @@
               "query": [
                 {
                   "key": "account_id",
-                  "value": "{{investmentAccount2Id}}"
+                  "value": "{{investmentAccountId}}"
                 }
               ]
             },
@@ -19786,6 +21397,57 @@
       "name": "10. Wrap-up",
       "description": "The 2FA brute-force limit, resetting the test users, and logout.",
       "item": [
+        {
+          "name": "Sign in as Ada",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"session cookies set\", () => pm.expect(pm.cookies.has(\"access_token\") && pm.cookies.has(\"refresh_token\"), \"session cookies set\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/signin",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "signin"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{adaEmail}}\",\n  \"password\": \"{{adaPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Switches the session (Postman's cookie jar) to ada_login.\n\n**Expect:** 200\n\n**Checks:**\n- session cookies set"
+          }
+        },
         {
           "name": "2FA: start setup (for the brute-force check)",
           "event": [

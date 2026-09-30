@@ -216,10 +216,38 @@ const kycVerify = (note = "") =>
     checks: [["verified", 'j.kyc_status === "verified"']],
   });
 
-const openAccount = (name, variable, { type = "current", currency = "NGN", saveNumber } = {}) =>
+// A customer has at most one personal and one business wallet, so folders
+// that need several accounts use their own fresh users, created each run
+// (role_<timestamp>) and signed in with signInAs(role).
+const TEST_PASSWORD = "VergePay#Test2026";
+
+const signInAs = (role, label = role) =>
+  req(`Sign in as ${label}`, "POST", "/auth/signin", {
+    body: { email: `{{${role}Username}}@vergepay.dev`, password: TEST_PASSWORD },
+    status: 200,
+    description: `Switches the session to this run's ${label} user.`,
+    checks: [["session cookies set", 'pm.cookies.has("access_token") && pm.cookies.has("refresh_token")']],
+  });
+
+const newUser = (role, label = role) => [
+  req(`New user: ${label}`, "POST", "/auth/signup", {
+    pre: [`pm.collectionVariables.set("${role}Username", "${role}_" + Date.now());`],
+    body: {
+      username: `{{${role}Username}}`,
+      email: `{{${role}Username}}@vergepay.dev`,
+      password: TEST_PASSWORD,
+      confirmPassword: TEST_PASSWORD,
+    },
+    status: 201,
+    description: `A fresh user for this run, so the ${label} steps start with no wallets.`,
+  }),
+  signInAs(role, label),
+];
+
+const openAccount = (name, variable, { purpose = "personal", currency = "NGN", saveNumber } = {}) =>
   req(name, "POST", "/accounts", {
     idem: "new",
-    body: { account_type: type, currency_code: currency },
+    body: { account_type: "current", currency_code: currency, purpose },
     status: 201,
     save: [[variable, "j.account_id"], ...(saveNumber ? [[saveNumber, "j.account_number"]] : [])],
   });
@@ -395,24 +423,26 @@ const profile = [
 ];
 
 // ---------------------------------------------------------------------------
-// 3. Accounts (as Tolu)
+// 3. Accounts (a fresh account holder: one personal and one business wallet at most)
 
 const accounts = [
-  req("List my accounts", "GET", "/accounts", { status: 200, checks: [["returns a data array", "Array.isArray(j.data)"]] }),
-  req("Open account", "POST", "/accounts", {
+  ...newUser("holder", "account holder"),
+  req("List my accounts (none yet)", "GET", "/accounts", { status: 200, checks: [["a new user has no wallets", "Array.isArray(j.data) && j.data.length === 0"]] }),
+  req("Open my personal wallet", "POST", "/accounts", {
     idem: "new",
-    body: { account_type: "savings", currency_code: "NGN" },
+    body: { account_type: "current", currency_code: "NGN" },
     status: 201,
-    description: "Generates a fresh Idempotency-Key and saves the new account's id.",
+    description: "Generates a fresh Idempotency-Key and saves the new account's id. purpose defaults to personal.",
     save: [["accountId", "j.account_id"]],
     checks: [
       ["10-digit account number", "/^\\d{10}$/.test(j.account_number)"],
       ["starts with zero balance", "j.balance_minor === 0"],
+      ["purpose defaults to personal", 'j.purpose === "personal"'],
     ],
   }),
   req("Open account - replay same key (no duplicate)", "POST", "/accounts", {
     idem: "same",
-    body: { account_type: "savings", currency_code: "NGN" },
+    body: { account_type: "current", currency_code: "NGN" },
     status: 201,
     description: "Re-sends the same key and body. The original response comes back; no second account is created.",
     checks: [
@@ -422,15 +452,74 @@ const accounts = [
   }),
   req("Open account - same key, different body", "POST", "/accounts", {
     idem: "same",
-    body: { account_type: "current", currency_code: "NGN" },
+    body: { account_type: "current", currency_code: "USD" },
     status: 422,
     checks: [["key conflict", 'errorCode === "IDEMPOTENCY_KEY_CONFLICT"']],
   }),
-  req("Open account - missing key", "POST", "/accounts", { body: { account_type: "savings", currency_code: "NGN" }, status: 400 }),
+  req("Open account - missing key", "POST", "/accounts", { body: { account_type: "current", currency_code: "NGN" }, status: 400 }),
+  req("Open a second personal wallet", "POST", "/accounts", {
+    idem: "new",
+    body: { account_type: "current", currency_code: "USD", purpose: "personal" },
+    status: 409,
+    description: "A customer has one personal and one business wallet at most.",
+    checks: [["already has one", 'errorCode === "CONFLICT" && j.error.field === "purpose"']],
+  }),
+  req("Open account - savings isn't user-openable", "POST", "/accounts", {
+    idem: "new",
+    body: { account_type: "savings", currency_code: "NGN", purpose: "business" },
+    status: 422,
+    checks: [["account_type flagged", "Boolean(j.error.details.account_type)"]],
+  }),
+  req("Open account - investment_wallet isn't user-openable", "POST", "/accounts", {
+    idem: "new",
+    body: { account_type: "investment_wallet", currency_code: "USD", purpose: "business" },
+    status: 422,
+    description: "Investment wallets are opened for the customer when they link a brokerage (folder 10).",
+    checks: [["account_type flagged", "Boolean(j.error.details.account_type)"]],
+  }),
   req("Open account - loan_holding isn't user-openable", "POST", "/accounts", {
     idem: "new",
-    body: { account_type: "loan_holding", currency_code: "NGN" },
+    body: { account_type: "loan_holding", currency_code: "NGN", purpose: "business" },
     status: 422,
+  }),
+  req("Open account - currency other than NGN or USD", "POST", "/accounts", {
+    idem: "new",
+    body: { account_type: "current", currency_code: "GBP", purpose: "business" },
+    status: 422,
+    checks: [["currency flagged", "Boolean(j.error.details.currency_code)"]],
+  }),
+  req("Open account - unknown purpose", "POST", "/accounts", {
+    idem: "new",
+    body: { account_type: "current", currency_code: "NGN", purpose: "family" },
+    status: 422,
+    checks: [["purpose flagged", "Boolean(j.error.details.purpose)"]],
+  }),
+  concurrently("Concurrent: open the business wallet 3 times at once", {
+    count: 3,
+    method: "POST",
+    path: "/accounts",
+    bodyExpr: '{ account_type: "current", currency_code: "USD", purpose: "business" }',
+    expectExpr: `${count(null, 201)} === 1 && ${count(null, 409)} === 2`,
+    label: "exactly one business wallet is opened",
+    description: "Three taps at once, each with its own Idempotency-Key. Account opening locks the user's row, so the first opens the wallet and the other two see it and get 409.",
+  }),
+  req("List accounts - business only", "GET", "/accounts?purpose=business", {
+    status: 200,
+    save: [["businessAccountId", "j.data[0] && j.data[0].account_id"]],
+    checks: [
+      ["exactly one business wallet, in USD", 'j.data.length === 1 && j.data[0].purpose === "business" && j.data[0].currency_code === "USD"'],
+    ],
+  }),
+  req("List accounts - unknown purpose filter", "GET", "/accounts?purpose=family", { status: 422 }),
+  req("List my accounts (two wallets)", "GET", "/accounts", {
+    status: 200,
+    checks: [["one personal, one business", 'j.data.length === 2 && j.data.some((a) => a.purpose === "personal") && j.data.some((a) => a.purpose === "business")']],
+  }),
+  req("Update - purpose isn't editable", "PATCH", "/accounts/{{businessAccountId}}", {
+    body: { purpose: "personal" },
+    status: 422,
+    description: "A wallet's purpose is fixed once it's opened.",
+    checks: [["purpose flagged", "Boolean(j.error.details.purpose)"]],
   }),
   req("Get account", "GET", "/accounts/{{accountId}}", {
     status: 200,
@@ -451,6 +540,13 @@ const accounts = [
   req("Unfreeze", "POST", "/accounts/{{accountId}}/unfreeze", { status: 200, checks: [["active", 'j.account_status === "active"']] }),
   req("Close", "POST", "/accounts/{{accountId}}/close", { status: 200, checks: [["closed", 'j.account_status === "closed"']] }),
   req("Reopen a closed account", "POST", "/accounts/{{accountId}}/unfreeze", { status: 409 }),
+  req("Open a new personal wallet after closing the old one", "POST", "/accounts", {
+    idem: "new",
+    body: { account_type: "current", currency_code: "NGN", purpose: "personal" },
+    status: 201,
+    description: "A closed wallet doesn't count, so its slot is free again.",
+    checks: [["a different account", 'j.account_id !== v("accountId")']],
+  }),
   req("Someone else's / unknown account", "GET", "/accounts/00000000-0000-4000-8000-000000000000", {
     status: 404,
     description: "Ownership mismatches are reported as 404, never 403, so account ids can't be probed.",
@@ -458,7 +554,7 @@ const accounts = [
 ];
 
 // ---------------------------------------------------------------------------
-// 4. Transactions (as Tolu)
+// 4. Transactions (a fresh sender: personal wallet → business wallet)
 
 const transferBody = {
   sender_account_id: "{{senderAccountId}}",
@@ -469,9 +565,10 @@ const transferBody = {
 };
 
 const transactions = [
+  ...newUser("sender"),
   kycVerify(),
-  openAccount("Open sender account", "senderAccountId"),
-  openAccount("Open receiver account", "receiverAccountId", { type: "savings", saveNumber: "receiverAccountNumber" }),
+  openAccount("Open sender account (personal wallet)", "senderAccountId"),
+  openAccount("Open receiver account (business wallet)", "receiverAccountId", { purpose: "business", saveNumber: "receiverAccountNumber" }),
   req("Dev: fund sender with 100,000", "POST", "/dev/accounts/{{senderAccountId}}/fund", {
     idem: "new",
     body: { amount_minor: 100000 },
@@ -567,7 +664,7 @@ const transactions = [
 ];
 
 // ---------------------------------------------------------------------------
-// 5. Loans (as Tolu; the back office uses the internal key)
+// 5. Loans (a fresh borrower; the back office uses the internal key)
 
 const loanApplication = {
   account_id: "{{loanAccountId}}",
@@ -579,7 +676,10 @@ const loanApplication = {
 };
 
 const loans = [
-  openAccount("Open loan account", "loanAccountId"),
+  ...newUser("borrower"),
+  kycVerify(),
+  openAccount("Open loan account (personal wallet)", "loanAccountId"),
+  openAccount("Open the repaying account (business wallet)", "receiverAccountId", { purpose: "business" }),
   req("Apply - term of 0 months", "POST", "/loans/applications", { body: { ...loanApplication, term_months: 0 }, status: 422 }),
   req("Apply - currency doesn't match the account", "POST", "/loans/applications", { body: { ...loanApplication, currency_code: "USD" }, status: 422 }),
   req("Apply - unknown account", "POST", "/loans/applications", {
@@ -770,7 +870,8 @@ const loans = [
   req("List my loans", "GET", "/loans", { status: 200, checks: [["includes the loan", 'j.data.some((l) => l.loan_id === v("loanId"))']] }),
   req("Close the loan account now", "POST", "/accounts/{{loanAccountId}}/close", { status: 200, description: "Allowed once the loan is repaid (and the account is empty)." }),
   req("Apply for a second loan", "POST", "/loans/applications", {
-    body: { ...loanApplication, account_id: "{{senderAccountId}}" },
+    body: { ...loanApplication, account_id: "{{receiverAccountId}}" },
+    description: "Into the borrower's other wallet (the first loan's account is closed now).",
     status: 202,
     save: [["applicationId", "j.application_id"]],
   }),
@@ -790,7 +891,7 @@ const loans = [
 ];
 
 // ---------------------------------------------------------------------------
-// 6. Invoices (Tolu issues, Ada pays)
+// 6. Invoices (fresh users each run: Tolu issues, Ada pays)
 
 const invoiceBase = {
   issuer_account_id: "{{issuerAccountId}}",
@@ -808,15 +909,17 @@ const refundInvoice = (name, invoiceVar, opts = {}) =>
   req(name, "POST", `/invoices/{{${invoiceVar}}}/refund`, opts);
 
 const invoices = [
-  signIn("ada"),
+  ...newUser("usdholder", "USD account holder"),
+  openAccount("USD holder: open a USD wallet", "payerUsdAccountId", { currency: "USD", saveNumber: "payerUsdAccountNumber" }),
+  ...newUser("payer", "payer (Ada)"),
   kycVerify(),
-  openAccount("Ada: open payer account", "payerAccountId", { saveNumber: "payerAccountNumber" }),
-  openAccount("Ada: open an empty account", "payerEmptyAccountId"),
-  openAccount("Ada: open a USD account", "payerUsdAccountId", { currency: "USD", saveNumber: "payerUsdAccountNumber" }),
+  openAccount("Ada: open payer account (personal wallet)", "payerAccountId", { saveNumber: "payerAccountNumber" }),
+  openAccount("Ada: open an empty account (business wallet)", "payerEmptyAccountId", { purpose: "business" }),
   req("Ada: fund payer with 1,000,000", "POST", "/dev/accounts/{{payerAccountId}}/fund", { idem: "new", body: { amount_minor: 1000000 }, status: 201 }),
-  signIn("tolu"),
-  openAccount("Tolu: open issuing account", "issuerAccountId", { saveNumber: "issuerAccountNumber" }),
-  openAccount("Tolu: open a second issuing account", "issuerEmptyAccountId"),
+  ...newUser("issuer", "issuer (Tolu)"),
+  kycVerify(),
+  openAccount("Tolu: open issuing account (personal wallet)", "issuerAccountId", { saveNumber: "issuerAccountNumber" }),
+  openAccount("Tolu: open a second issuing account (business wallet)", "issuerEmptyAccountId", { purpose: "business" }),
   createInvoice("Create - both account_id and a number", { account_id: "{{payerAccountId}}" }, { status: 422 }),
   createInvoice("Create - due date in the past", { due_date: "2020-01-01" }, { status: 422, checks: [["due_date flagged", "Boolean(j.error.details.due_date)"]] }),
   createInvoice("Create - billed account in another currency", { billed_account_number: "{{payerUsdAccountNumber}}" }, { status: 422, checks: [["currency flagged", "Boolean(j.error.details.currency_code)"]] }),
@@ -857,7 +960,7 @@ const invoices = [
     checks: [["then the first invoice", 'j.data[0].invoice_id === v("invoiceId")']],
   }),
   payInvoice("Issuer pays their own invoice", "invoiceId", { idem: "new", body: { source_account_id: "{{issuerEmptyAccountId}}" }, status: 403 }),
-  signIn("ada"),
+  signInAs("payer", "payer (Ada)"),
   req("Ada sees it as received", "GET", "/invoices/{{invoiceId}}", {
     status: 200,
     checks: [["received, from Tolu's account", 'j.direction === "received" && j.issuer_account_number === v("issuerAccountNumber")']],
@@ -884,7 +987,7 @@ const invoices = [
     checks: [["invoice_payment, 250,000, into the issuing account", 'j.transaction_type === "invoice_payment" && j.amount_minor === 250000 && j.receiver_account_id === v("issuerAccountId")']],
   }),
   req("Billed user can't cancel", "POST", "/invoices/{{extraA}}/cancel", { status: 403 }),
-  signIn("tolu"),
+  signInAs("issuer", "issuer (Tolu)"),
   balanceIs("Tolu received 250,000", "issuerAccountId", "250000"),
   req("Cancel a paid invoice", "POST", "/invoices/{{invoiceId}}/cancel", {
     status: 409,
@@ -905,7 +1008,7 @@ const invoices = [
   req("Cancel that invoice", "POST", "/invoices/{{pendingInvoiceId}}/cancel", { status: 200 }),
   req("Close the account now", "POST", "/accounts/{{issuerEmptyAccountId}}/close", { status: 200 }),
   createInvoice("Create a 'race' invoice (₦70)", { amount_due_minor: 7000 }, { status: 201, save: [["raceInvoiceId", "j.invoice_id"]] }),
-  signIn("ada"),
+  signInAs("payer", "payer (Ada)"),
   req("Ada: pay a cancelled invoice", "POST", "/invoices/{{extraA}}/pay", { idem: "new", body: { source_account_id: "{{payerAccountId}}" }, status: 409 }),
   req("Past-due open invoice reads as overdue", "GET", "/invoices/{{lateInvoiceId}}", { status: 200, checks: [["overdue", 'j.invoice_status === "overdue"']] }),
   req("Overdue filter", "GET", "/invoices?status=overdue&limit=100", {
@@ -924,7 +1027,7 @@ const invoices = [
     description: "The invoice row is locked while it's paid, so the other four see it already paid.",
   }),
   balanceIs("Ada charged once for each (738,000 left)", "payerAccountId", "738000"),
-  signIn("tolu"),
+  signInAs("issuer", "issuer (Tolu)"),
   balanceIs("Tolu holds all three payments (262,000)", "issuerAccountId", "262000"),
   refundInvoice("Refund - missing key", "invoiceId", { body: {}, status: 400 }),
   refundInvoice("Refund - reason too long", "invoiceId", { idem: "new", body: { reason: "x".repeat(300) }, status: 422 }),
@@ -954,7 +1057,7 @@ const invoices = [
     status: 200,
     checks: [["refunded", 'j.invoice_status === "refunded"']],
   }),
-  openAccount("Tolu: open a sink account", "sinkAccountId"),
+  openAccount("Tolu: open a sink account (business wallet; the second one was closed)", "sinkAccountId", { purpose: "business" }),
   req("Move Tolu's last 7,000 out", "POST", "/transactions", {
     idem: "new",
     body: { sender_account_id: "{{issuerAccountId}}", receiver_account_id: "{{sinkAccountId}}", amount_minor: 7000, currency_code: "NGN" },
@@ -977,7 +1080,7 @@ const invoices = [
     description: "A payment can only be refunded once: the invoice row lock and the unique reverses_transaction_id both enforce it.",
   }),
   balanceIs("Tolu refunded once (0 left)", "issuerAccountId", "0"),
-  signIn("ada"),
+  signInAs("payer", "payer (Ada)"),
   refundInvoice("Billed user can't refund", "raceInvoiceId", { idem: "new", body: { reason: "please" }, status: 403 }),
   req("Original payment is now reversed", "GET", "/transactions/{{settlingTransactionId}}", {
     status: 200,
@@ -1001,6 +1104,7 @@ const invoices = [
 // 7. Two-factor authentication (as Ada)
 
 const twoFactor = [
+  signIn("ada"),
   req("Disable 2FA without a recent code", "DELETE", "/auth/2fa", { status: 403, checks: [["asks for 2FA", 'errorCode === "TWO_FACTOR_REQUIRED"']] }),
   req("Verify before setup", "POST", "/auth/2fa/verify", { body: { code: "123456" }, status: 409 }),
   req("Start setup", "POST", "/auth/2fa/enable", {
@@ -1064,7 +1168,7 @@ const twoFactor = [
 ];
 
 // ---------------------------------------------------------------------------
-// 8. Cards, webhook and bank transfers (as Ada, against the Flutterwave stand-in)
+// 8. Cards, webhook and bank transfers (a fresh card holder, against the Flutterwave stand-in)
 
 const webhookHeaders = [{ key: "verif-hash", value: "{{flwSecretHash}}" }];
 const chargeCard = (name, amount, opts = {}) =>
@@ -1082,14 +1186,13 @@ const cards = [
   standIn("Stand-in: is it running? (sets charges to 'pending')", "/_test/mode", { charge: "pending" }, {
     description: "Calls the Flutterwave stand-in, not the API. If this fails, start it with `npm run flw:stand-in` and start the API with `npm run start:with-stand-in`.",
   }),
+  ...newUser("cardholder", "card holder (Ada)"),
   kycVerify(),
-  openAccount("Open the card account", "cardAccountId"),
-  openAccount("Open a second account", "cardAccount2Id"),
-  openAccount("Open a USD account", "cardUsdAccountId", { currency: "USD" }),
+  openAccount("Open the card account (personal wallet)", "cardAccountId"),
+  openAccount("Open a second account (business wallet)", "cardAccount2Id", { purpose: "business" }),
   req("Add a card without 2FA", "POST", "/cards", { idem: "new", body: { account_id: "{{cardAccountId}}" }, status: 403, checks: [["asks for 2FA", 'errorCode === "TWO_FACTOR_REQUIRED"']] }),
   ...enableTwoFactor(),
   req("Add a card - missing key", "POST", "/cards", { body: { account_id: "{{cardAccountId}}" }, status: 400 }),
-  req("Add a card to a USD account", "POST", "/cards", { idem: "new", body: { account_id: "{{cardUsdAccountId}}" }, status: 422 }),
   req("Add a card - client-supplied card_token is refused", "POST", "/cards", {
     idem: "new",
     body: { account_id: "{{cardAccountId}}", card_token: "tok_x" },
@@ -1277,7 +1380,6 @@ const cards = [
   req("Dev: unverify KYC so the name can be set", "POST", "/dev/test-user/reset", { body: { kyc: true }, status: 200, description: "KYC locks names, so this steps back to unverified for a moment." }),
   req("Set Ada's name", "PATCH", "/users/me", { body: { first_name: "Ada", last_name: "Test" }, status: 200 }),
   kycVerify("Verified again."),
-  req("Bank-transfer number for a USD account", "POST", "/accounts/{{cardUsdAccountId}}/virtual-account", { body: { bvn: "22222223883" }, status: 422 }),
   req("Bank-transfer number - processor rejects the BVN", "POST", "/accounts/{{cardAccountId}}/virtual-account", { body: { bvn: "00000000000" }, status: 502 }),
   req("No bank-transfer number yet", "GET", "/accounts/{{cardAccountId}}/virtual-account", { status: 404 }),
   req("Create the bank-transfer number", "POST", "/accounts/{{cardAccountId}}/virtual-account", {
@@ -1326,13 +1428,20 @@ const cards = [
   reverify("Removing needs a recent code."),
   req("Remove the card", "DELETE", "/cards/{{cardId}}", { status: 200, description: "The token is overwritten in the database, so the credential itself is gone.", checks: [["removed", 'j.card_status === "removed"']] }),
   req("A removed card is gone", "GET", "/cards/{{cardId}}", { status: 404 }),
+  req("Close the card account now", "POST", "/accounts/{{cardAccountId}}/close", {
+    status: 200,
+    description: "The card is gone and the money was moved out, so it can close. That frees the personal-wallet slot for the USD checks.",
+  }),
+  openAccount("Open a USD personal wallet", "cardUsdAccountId", { currency: "USD" }),
+  req("Add a card to a USD account", "POST", "/cards", { idem: "new", body: { account_id: "{{cardUsdAccountId}}" }, status: 422, description: "Cards fund NGN wallets only." }),
+  req("Bank-transfer number for a USD account", "POST", "/accounts/{{cardUsdAccountId}}/virtual-account", { body: { bvn: "22222223883" }, status: 422 }),
   chargeCard("Charge a removed card", 20000, { idem: "new", status: 404 }),
   req("2FA off again", "DELETE", "/auth/2fa", { status: 200 }),
   invariants(),
 ];
 
 // ---------------------------------------------------------------------------
-// 10. Investments (as Ada; Alpaca stand-in; needs the worker running)
+// 10. Investments (a fresh investor; Alpaca stand-in; needs the worker running)
 
 const alpacaStandIn = (name, path, body, opts = {}) =>
   req(name, "POST", path, { base: "{{alpacaUrl}}", body, status: 200, ...opts });
@@ -1375,7 +1484,7 @@ function waitForLink(name, { until, checks, description }) {
 
 const startConnect = (name, opts = {}) =>
   req(name, "POST", "/brokerage-links", {
-    body: { provider_name: "alpaca", account_id: "{{investmentAccountId}}" },
+    body: { provider_name: "alpaca" },
     status: 200,
     save: [["authorizationUrl", "j.authorization_url"], ["oauthState", "j.state"]],
     ...opts,
@@ -1418,19 +1527,31 @@ const investments = [
       { symbol: "AAPL250117C00200000", qty: "1", avg_entry_price: "2.5", asset_class: "us_option" },
     ],
   }),
+  ...newUser("investor"),
+  openAccount("Open a personal wallet", "investorWalletId"),
+  req("No investment wallet yet", "GET", "/accounts", {
+    status: 200,
+    description: "Customers don't open investment wallets; one is opened for them when they link a brokerage.",
+    checks: [["none", '!j.data.some((a) => a.account_type === "investment_wallet")']],
+  }),
   req("Connect without 2FA", "POST", "/brokerage-links", { body: { provider_name: "alpaca" }, status: 403, checks: [["asks for 2FA", 'errorCode === "TWO_FACTOR_REQUIRED"']] }),
   ...enableTwoFactor(),
   req("Connect - unsupported provider", "POST", "/brokerage-links", { body: { provider_name: "robinhood" }, status: 422 }),
   req("Connect - into a current account", "POST", "/brokerage-links", {
-    body: { provider_name: "alpaca", account_id: "{{cardAccount2Id}}" },
+    body: { provider_name: "alpaca", account_id: "{{investorWalletId}}" },
     status: 422,
-    description: "Holdings sit in an investment_wallet account.",
+    description: "Holdings sit in an investment_wallet account, not a wallet.",
   }),
-  openAccount("Open an investment wallet", "investmentAccountId", { type: "investment_wallet", currency: "USD" }),
   startConnect("Start connecting Alpaca", {
     checks: [
       ["an Alpaca authorization URL and a state", 'j.authorization_url.startsWith(v("alpacaUrl") + "/oauth/authorize?") && typeof j.state === "string"'],
       ["asks for the paper account, with our callback", 'qp(j.authorization_url, "env") === "paper" && qp(j.authorization_url, "redirect_uri").endsWith("/v1/brokerage-links/oauth/callback") && qp(j.authorization_url, "state") === j.state']],
+  }),
+  req("An investment wallet was opened for me", "GET", "/accounts", {
+    status: 200,
+    description: "Starting the connection opened the customer's investment wallet (USD), outside the two-wallet limit.",
+    save: [["investmentAccountId", 'j.data.find((a) => a.account_type === "investment_wallet").account_id']],
+    checks: [["exactly one, in USD", 'j.data.filter((a) => a.account_type === "investment_wallet").length === 1 && j.data.find((a) => a.account_type === "investment_wallet").currency_code === "USD"']],
   }),
   approveAtBrokerage(),
   landOnCallback("Our callback links the account"),
@@ -1527,8 +1648,7 @@ const investments = [
     checks: [["asks to reconnect", "/Reconnect/.test(errorMessage)"]],
   }),
   reverify("Reconnecting is 'User + 2FA' too."),
-  openAccount("Open a second investment wallet (reconnect into it)", "investmentAccount2Id", { type: "investment_wallet", currency: "USD" }),
-  startConnect("Reconnect into the second wallet", { body: { provider_name: "alpaca", account_id: "{{investmentAccount2Id}}" } }),
+  startConnect("Reconnect"),
   approveAtBrokerage("Reconnect: the user approves"),
   req("Reconnect: our callback reuses the same link", "GET", "", {
     rawUrl: "{{callbackUrl}}",
@@ -1537,15 +1657,15 @@ const investments = [
     checks: [["linked, same link_id", 'qp(pm.response.headers.get("Location"), "status") === "linked" && qp(pm.response.headers.get("Location"), "link_id") === v("brokerageLinkId")']],
   }),
   waitForLink("The reconnected link is active and syncs again", {
-    until: 'link.link_status === "active" && link.last_sync_status === "succeeded" && link.account_id === v("investmentAccount2Id")',
-    checks: [["active, synced, now in the second wallet", 'link.link_status === "active" && link.last_sync_status === "succeeded" && link.account_id === v("investmentAccount2Id")']],
+    until: 'link.link_status === "active" && link.last_sync_status === "succeeded" && link.account_id === v("investmentAccountId")',
+    checks: [["active, synced, same wallet", 'link.link_status === "active" && link.last_sync_status === "succeeded" && link.account_id === v("investmentAccountId")']],
   }),
-  req("The holdings moved to the second wallet", "GET", "/holdings?account_id={{investmentAccount2Id}}", {
+  holdingsList("The holdings are back in the wallet", [["the 2 holdings are here", "j.data.length === 2"]]),
+  req("Still one investment wallet", "GET", "/accounts", {
     status: 200,
-    description: "Regression check, found with real Alpaca data: re-linking into another wallet used to leave the synced holdings in the old one.",
-    checks: [["the 2 holdings are here", "j.data.length === 2"]],
+    description: "Reconnecting reuses the customer's investment wallet rather than opening another.",
+    checks: [["exactly one", 'j.data.filter((a) => a.account_type === "investment_wallet").length === 1']],
   }),
-  holdingsList("…and nothing is left in the first", [["none", "j.data.length === 0"]]),
   alpacaStandIn("Stand-in: the next Alpaca login is denied", "/_test/next-authorize", { decision: "deny" }),
   startConnect("Start connecting (the user will decline)"),
   approveAtBrokerage("The user declines on Alpaca"),
@@ -1563,7 +1683,7 @@ const investments = [
     description: "Destroys the stored token (nothing is left to decrypt) and removes the holdings that came from this link.",
     checks: [["revoked", 'j.link_status === "revoked"']],
   }),
-  req("Its holdings are gone", "GET", "/holdings?account_id={{investmentAccount2Id}}", { status: 200, checks: [["none", "j.data.length === 0"]] }),
+  req("Its holdings are gone", "GET", "/holdings?account_id={{investmentAccountId}}", { status: 200, checks: [["none", "j.data.length === 0"]] }),
   req("Gone from the links list", "GET", "/brokerage-links", { status: 200, checks: [["not listed", '!j.data.some((l) => l.link_id === v("brokerageLinkId"))']] }),
   req("Disconnect twice", "DELETE", "/brokerage-links/{{brokerageLinkId}}", { status: 409 }),
   req("Sync a disconnected link", "POST", "/brokerage-links/{{brokerageLinkId}}/sync", { status: 409 }),
@@ -1574,6 +1694,7 @@ const investments = [
 // 9. Wrap-up
 
 const wrapUp = [
+  signIn("ada"),
   req("2FA: start setup (for the brute-force check)", "POST", "/auth/2fa/enable", { status: 200 }),
   req("2FA: brute force is cut off", "POST", "/auth/2fa/verify", {
     body: { code: "000000" },
@@ -1605,8 +1726,12 @@ const wrapUp = [
 // The live Flutterwave sandbox collection (manual steps)
 
 const live = [
-  signIn("ada"),
-  req("Dev: reset Ada", "POST", "/dev/test-user/reset", { body: { two_factor: true, pending_loan_applications: true }, status: 200 }),
+  ...newUser("liveholder", "live sandbox customer"),
+  req("Set a profile name", "PATCH", "/users/me", {
+    body: { first_name: "Ada", last_name: "Test" },
+    status: 200,
+    description: "The bank-transfer number needs a first and last name, and KYC locks names, so it's set before verifying.",
+  }),
   kycVerify(),
   ...enableTwoFactor(),
   openAccount("Open the card account", "liveAccountId"),
@@ -1643,7 +1768,7 @@ const live = [
     pre: [],
     body: { bvn: "22222223883" },
     status: [200, 201],
-    description: "Needs a first and last name on the profile (folder 8 of the main suite sets Ada's).",
+    description: "Needs a first and last name on the profile (set at the start).",
   }),
   reverify("Re-confirm to switch 2FA off."),
   req("2FA off", "DELETE", "/auth/2fa", { status: 200 }),
