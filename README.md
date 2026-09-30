@@ -239,7 +239,7 @@ The full designs are in [`documentation/`](documentation/): the API design (`Fin
 
 ## Security at a glance
 
-- **Sessions:** short-lived access JWTs and one-time refresh tokens in HttpOnly, SameSite=Strict cookies. Only a SHA-256 hash of each refresh token is stored.
+- **Sessions:** short-lived access JWTs and one-time refresh tokens in HttpOnly, SameSite=Lax cookies (Lax so the session survives the return from a payment page; cross-site writes still carry no cookie). Only a SHA-256 hash of each refresh token is stored.
 - **Money actions:** most are KYC-gated (a borrower can always repay), all are rate-limited per user, and they're 2FA-gated where the API design calls for it.
 - **Ownership:** another user's resource is a `404`, not a `403`, so ids can't be probed.
 - **Secrets at rest:** TOTP secrets and brokerage OAuth tokens are AES-256-GCM encrypted, each with its own key; tokens live in a vault table, and links hold only a reference. The BVN used to create a virtual account is passed straight through and never stored. Card numbers never touch the server.

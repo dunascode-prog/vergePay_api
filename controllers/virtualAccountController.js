@@ -106,12 +106,14 @@ export async function createVirtualAccount(req, res) {
       [account.account_id, created.account_number, created.bank_name, txRef, created.order_ref ?? null],
     );
   } catch (err) {
-    // Two requests raced; the other one saved it first.
     if (err.code !== "23505") throw err;
+    // Two requests for this account raced; the other one saved it first.
+    // Any other clash isn't a race, so it must not be answered as one.
     const winner = await pool.query(
       `SELECT ${VIRTUAL_ACCOUNT_COLUMNS} FROM virtual_accounts WHERE account_id = $1`,
       [account.account_id],
     );
+    if (!winner.rows[0]) throw err;
     return res.status(200).json(winner.rows[0]);
   }
 

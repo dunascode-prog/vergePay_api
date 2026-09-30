@@ -6,7 +6,10 @@ import { createAccessToken, createRefreshToken } from "./jwt.js";
 const cookieOptions = {
   httpOnly: true,
   secure: env.nodeEnv === "production",
-  sameSite: "strict",
+  // Lax, not Strict: the browser must still send the session when a payment
+  // page (Flutterwave checkout) sends the customer back to us. Lax still
+  // withholds cookies from cross-site POST/PATCH/DELETE, and every GET is a read.
+  sameSite: "lax",
 };
 
 export function hashToken(token) {

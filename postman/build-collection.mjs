@@ -1495,6 +1495,12 @@ const cards = [
     status: 200,
     checks: [["same number", 'j.account_number === v("virtualAccountNumber")']],
   }),
+  req("Another wallet, same number from the processor", "POST", "/accounts/{{cardAccount2Id}}/virtual-account", {
+    body: { bvn: "22222223883" },
+    status: 201,
+    description: "Flutterwave's test mode gives everyone the same number. Each wallet still gets its own record (deposits map by reference), not an empty reply.",
+    checks: [["its own record", 'j.account_number === v("virtualAccountNumber") && Boolean(j.virtual_account_id)']],
+  }),
   standIn("Stand-in: someone transfers ₦2,500.50 into it", "/_test/deposit", { tx_ref: "va-{{cardAccountId}}", amount: 2500.5 }, { save: [["depositId", "String(j.id)"]] }),
   req("Webhook: the bank transfer", "POST", "/webhooks/payment-processor", {
     headers: webhookHeaders,
