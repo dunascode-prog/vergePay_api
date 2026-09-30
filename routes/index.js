@@ -1,5 +1,6 @@
 import authRouter from "./authRoutes.js";
 import userRouter from "./userRoutes.js";
+import kycRouter from "./kycRoutes.js";
 import accountRouter from "./accountRoutes.js";
 import transactionRouter from "./transactionRoutes.js";
 import loanRouter from "./loanRoutes.js";
@@ -15,6 +16,7 @@ import env from "../env.js";
 export default function registerRoutes(app) {
   app.use("/v1/auth", authRouter);
   app.use("/v1/users", userRouter);
+  app.use("/v1/kyc", kycRouter);
   app.use("/v1/accounts", accountRouter);
   app.use("/v1/transactions", transactionRouter);
   app.use("/v1/loans", loanRouter);

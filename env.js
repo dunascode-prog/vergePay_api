@@ -88,6 +88,17 @@ const env = {
     // first retry delay; each retry doubles it
     retryDelayMs: parseInt(process.env.BROKERAGE_RETRY_DELAY_MS, 10) || 5000,
   },
+  // Identity verification (services/kyc.js). "sandbox" decides submissions
+  // itself, for development and tests; anything else leaves them pending for
+  // a real provider's webhook or a back-office review. Never sandbox in production.
+  kyc: {
+    provider:
+      process.env.NODE_ENV === "production"
+        ? process.env.KYC_PROVIDER || "manual"
+        : process.env.KYC_PROVIDER || "sandbox",
+    // how long the sandbox "takes" to decide, so the pending state is real
+    sandboxDelayMs: parseInt(process.env.KYC_SANDBOX_DELAY_MS, 10) || 1500,
+  },
   // shared secret for back-office callers (utils/internalAuth.js); unset
   // disables those endpoints
   internalApiKey: process.env.INTERNAL_API_KEY,

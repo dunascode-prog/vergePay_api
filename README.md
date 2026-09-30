@@ -6,7 +6,7 @@
 ![Express](https://img.shields.io/badge/Express-5-000000?logo=express&logoColor=white)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-17-4169E1?logo=postgresql&logoColor=white)
 ![Flutterwave](https://img.shields.io/badge/Payments-Flutterwave-F5A623)
-![Tests](https://img.shields.io/badge/Postman_suite-719%2F719_passing-2EA44F?logo=postman&logoColor=white)
+![Tests](https://img.shields.io/badge/Postman_suite-765%2F765_passing-2EA44F?logo=postman&logoColor=white)
 
 Built by **[Seyitan Omodara](https://github.com/dunascode-prog)** · Frontend: [vergePay_ui](https://github.com/dunascode-prog/vergePay_ui)
 
@@ -22,7 +22,7 @@ Built by **[Seyitan Omodara](https://github.com/dunascode-prog)** · Frontend: [
 | **Payments** | Flutterwave v3 hosted checkout, card tokenization, 3-D Secure and permanent virtual accounts, verified on the real sandbox |
 | **Investments** | Alpaca brokerage connected with OAuth 2.0; holdings synced by a BullMQ worker on Redis, with retries, backoff and a schedule |
 | **Security** | TOTP 2FA built from the RFC, HttpOnly cookie sessions with one-time refresh tokens, encrypted secrets, PCI-safe card handling |
-| **Testing** | 444-request Postman suite with **719 assertions**, including concurrency races, forged-webhook and OAuth attacks, and background-job retries, all passing |
+| **Testing** | 469-request Postman suite with **765 assertions**, including concurrency races, forged-webhook and OAuth attacks, and background-job retries, all passing |
 
 ---
 
@@ -154,6 +154,9 @@ The full designs are in [`documentation/`](documentation/): the API design (`Fin
 | POST | `/v1/auth/2fa/verify` | Finishes setup, answers the sign-in challenge, or re-confirms |
 | DELETE | `/v1/auth/2fa` | Turn 2FA off (needs a recent code) |
 | GET / PATCH | `/v1/users/me` | Profile. Name and date of birth lock once KYC starts |
+| POST | `/v1/kyc/submissions` | Verify identity by BVN, legal name and date of birth. `202`, decided asynchronously (the client polls). The BVN is stored encrypted in the vault, never returned. On approval the legal name moves onto the profile and locks. A sandbox provider decides in development; a real one (Dojah, Smile ID, Prembly) plugs into the same decision function |
+| GET | `/v1/kyc/submissions` · `/:id` | Submission history, newest first, with a rejection reason so a customer can fix it |
+| GET | `/v1/accounts/lookup?account_number=` | **Name enquiry** before sending: the wallet holder's name. Verified customers only, 30 per 15 minutes, never system or loan accounts |
 </details>
 
 <details>
@@ -247,7 +250,7 @@ The full designs are in [`documentation/`](documentation/): the API design (`Fin
 
 ## Testing
 
-The whole API is exercised by a Postman suite, [`postman/vergepay-api.postman_collection.json`](postman/vergepay-api.postman_collection.json): **444 requests and 719 assertions**, grouped into 11 folders from sign-up to brokerage disconnection. It isn't just happy paths:
+The whole API is exercised by a Postman suite, [`postman/vergepay-api.postman_collection.json`](postman/vergepay-api.postman_collection.json): **469 requests and 765 assertions**, grouped into 12 folders from sign-up to brokerage disconnection. It isn't just happy paths:
 
 - **Every edge case:** validation, wrong owner, wrong state (`409`), insufficient funds, replayed keys, and retries after a simulated crash.
 - **Races:** simultaneous payments, refunds, repayments and sign-ins, fired at the same instant from test scripts.
@@ -263,7 +266,7 @@ npm run flw:stand-in           # terminal 1: Flutterwave stand-in on :9999
 npm run alpaca:stand-in        # terminal 2: Alpaca stand-in on :9998
 npm run start:with-stand-in    # terminal 3: the API, pointed at the stand-ins
 npm run worker:with-stand-in   # terminal 4: the background worker (needs REDIS_URL)
-npm run test:postman           # terminal 5: runs all 444 requests with Newman
+npm run test:postman           # terminal 5: runs all 469 requests with Newman
 ```
 
 Writing the suite also caught real bugs, which were then fixed:
