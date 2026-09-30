@@ -51,7 +51,66 @@
       "description": "Manual steps are described on the requests that need them.",
       "item": [
         {
-          "name": "Sign in as Ada",
+          "name": "New user: live sandbox customer",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"liveholderUsername\", \"liveholder_\" + Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/signup",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "signup"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{liveholderUsername}}\",\n  \"email\": \"{{liveholderUsername}}@vergepay.dev\",\n  \"password\": \"VergePay#Test2026\",\n  \"confirmPassword\": \"VergePay#Test2026\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "A fresh user for this run, so the live sandbox customer steps start with no wallets.\n\n**Expect:** 201"
+          }
+        },
+        {
+          "name": "Sign in as live sandbox customer",
           "event": [
             {
               "listen": "test",
@@ -91,18 +150,18 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"email\": \"{{adaEmail}}\",\n  \"password\": \"{{adaPassword}}\"\n}",
+              "raw": "{\n  \"email\": \"{{liveholderUsername}}@vergepay.dev\",\n  \"password\": \"VergePay#Test2026\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
                 }
               }
             },
-            "description": "Switches the session (Postman's cookie jar) to ada_login.\n\n**Expect:** 200\n\n**Checks:**\n- session cookies set"
+            "description": "Switches the session to this run's live sandbox customer user.\n\n**Expect:** 200\n\n**Checks:**\n- session cookies set"
           }
         },
         {
-          "name": "Dev: reset Ada",
+          "name": "Set a profile name",
           "event": [
             {
               "listen": "test",
@@ -122,7 +181,7 @@
             }
           ],
           "request": {
-            "method": "POST",
+            "method": "PATCH",
             "header": [
               {
                 "key": "Content-Type",
@@ -130,26 +189,25 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/dev/test-user/reset",
+              "raw": "{{baseUrl}}/users/me",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
-                "dev",
-                "test-user",
-                "reset"
+                "users",
+                "me"
               ]
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"two_factor\": true,\n  \"pending_loan_applications\": true\n}",
+              "raw": "{\n  \"first_name\": \"Ada\",\n  \"last_name\": \"Test\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
                 }
               }
             },
-            "description": "**Expect:** 200"
+            "description": "The bank-transfer number needs a first and last name, and KYC locks names, so it's set before verifying.\n\n**Expect:** 200"
           }
         },
         {
@@ -369,7 +427,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"account_type\": \"current\",\n  \"currency_code\": \"NGN\"\n}",
+              "raw": "{\n  \"account_type\": \"current\",\n  \"currency_code\": \"NGN\",\n  \"purpose\": \"personal\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -711,7 +769,7 @@
                 }
               }
             },
-            "description": "Needs a first and last name on the profile (folder 8 of the main suite sets Ada's).\n\n**Expect:** 200 or 201"
+            "description": "Needs a first and last name on the profile (set at the start).\n\n**Expect:** 200 or 201"
           }
         },
         {
