@@ -30,7 +30,9 @@ process.env.ALPACA_REDIRECT_URI = `http://localhost:${process.env.PORT || 8000}/
 // the suite tests the OAuth flow, so the shared test account is always off
 // here, whatever .env says (unless a test run sets it explicitly)
 process.env.ALPACA_SHARED_ACCOUNT = process.env.ALPACA_SHARED_ACCOUNT_STAND_IN ?? "false";
-process.env.BROKERAGE_RETURN_URL = "http://localhost:3000/dashboard/investments/linked";
+// where the browser lands after the Alpaca step: the UI (override to test a UI on another port)
+process.env.BROKERAGE_RETURN_URL =
+  process.env.BROKERAGE_RETURN_URL_STAND_IN ?? "http://localhost:3000/dashboard/investments/linked";
 // quick retries so the suite can watch the backoff, and no scheduled
 // re-syncs getting in the way of a run
 process.env.BROKERAGE_RETRY_DELAY_MS = "300";
