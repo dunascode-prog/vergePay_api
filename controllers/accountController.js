@@ -14,6 +14,7 @@ import { isUuid, validationDetails } from "../utils/validation.js";
 const ACCOUNT_COLUMNS = `
     account_id,
     account_type,
+    purpose,
     account_number,
     currency_code,
     balance_minor,
@@ -26,9 +27,18 @@ const ACCOUNT_COLUMNS = `
 // loan_holding accounts are opened by the loan system, never by a user.
 const USER_OPENABLE_TYPES = ["current", "savings", "investment_wallet"];
 
+// A label for showing personal and business money apart; it doesn't change
+// how money moves.
+const PURPOSES = ["personal", "business"];
+
 const openAccountSchema = z.strictObject({
   account_type: z.enum(USER_OPENABLE_TYPES),
   currency_code: z.string().trim().toUpperCase().length(3),
+  purpose: z.enum(PURPOSES).default("personal"),
+});
+
+const listAccountsSchema = z.strictObject({
+  purpose: z.enum(PURPOSES).optional(),
 });
 
 const minorAmount = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
@@ -39,6 +49,7 @@ const updateAccountSchema = z
   .strictObject({
     income_minor: minorAmount.nullable(),
     total_savings_minor: minorAmount.nullable(),
+    purpose: z.enum(PURPOSES),
   })
   .partial();
 
@@ -74,11 +85,16 @@ async function findOwnAccount(db, userId, accountId, { lock = false } = {}) {
 }
 
 export async function listAccounts(req, res) {
+  const validation = listAccountsSchema.safeParse(req.query);
+  if (!validation.success) {
+    throw new ValidationError({ details: validationDetails(validation.error) });
+  }
   const result = await pool.query(
     `SELECT ${ACCOUNT_COLUMNS} FROM account
      WHERE user_id = $1
+       AND ($2::account_purpose_enum IS NULL OR purpose = $2::account_purpose_enum)
      ORDER BY created_at`,
-    [req.user.sub],
+    [req.user.sub, validation.data.purpose ?? null],
   );
   return res.status(200).json({ data: result.rows });
 }
@@ -89,7 +105,7 @@ export async function getAccount(req, res) {
 }
 
 export async function openAccount(req, res) {
-  const { account_type, currency_code } = parseBody(openAccountSchema, req.body);
+  const { account_type, currency_code, purpose } = parseBody(openAccountSchema, req.body);
 
   const currency = await pool.query(`SELECT 1 FROM currencies WHERE code = $1`, [
     currency_code,
@@ -106,10 +122,10 @@ export async function openAccount(req, res) {
     try {
       const account = await withTransaction(async (client) => {
         const result = await client.query(
-          `INSERT INTO account (user_id, account_type, account_number, currency_code)
-           VALUES ($1, $2, $3, $4)
+          `INSERT INTO account (user_id, account_type, account_number, currency_code, purpose)
+           VALUES ($1, $2, $3, $4, $5)
            RETURNING ${ACCOUNT_COLUMNS}`,
-          [req.user.sub, account_type, generateAccountNumber(), currency_code],
+          [req.user.sub, account_type, generateAccountNumber(), currency_code, purpose],
         );
         const created = result.rows[0];
         await writeAudit(client, {

@@ -75,3 +75,15 @@ INSERT INTO account (account_type, account_number, currency_code, is_system)
 SELECT 'current', 'SYS-FUND-' || code, code, TRUE
 FROM currencies
 ON CONFLICT (account_number) DO NOTHING;
+
+-- What an account is for, so the app can show personal and business money
+-- apart (and together). It's a label only: it never changes how money moves.
+DO $$ BEGIN
+    CREATE TYPE account_purpose_enum AS ENUM (
+        'personal',
+        'business'
+    );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+ALTER TABLE account ADD COLUMN IF NOT EXISTS purpose account_purpose_enum NOT NULL DEFAULT 'personal';

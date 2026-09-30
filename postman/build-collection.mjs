@@ -408,6 +408,7 @@ const accounts = [
     checks: [
       ["10-digit account number", "/^\\d{10}$/.test(j.account_number)"],
       ["starts with zero balance", "j.balance_minor === 0"],
+      ["purpose defaults to personal", 'j.purpose === "personal"'],
     ],
   }),
   req("Open account - replay same key (no duplicate)", "POST", "/accounts", {
@@ -431,6 +432,33 @@ const accounts = [
     idem: "new",
     body: { account_type: "loan_holding", currency_code: "NGN" },
     status: 422,
+  }),
+  req("Open account - business purpose", "POST", "/accounts", {
+    idem: "new",
+    body: { account_type: "current", currency_code: "NGN", purpose: "business" },
+    status: 201,
+    description: "purpose labels an account as personal or business money; it never changes how money moves.",
+    save: [["businessAccountId", "j.account_id"]],
+    checks: [["purpose is business", 'j.purpose === "business"']],
+  }),
+  req("Open account - unknown purpose", "POST", "/accounts", {
+    idem: "new",
+    body: { account_type: "current", currency_code: "NGN", purpose: "family" },
+    status: 422,
+    checks: [["purpose flagged", "Boolean(j.error.details.purpose)"]],
+  }),
+  req("List accounts - business only", "GET", "/accounts?purpose=business", {
+    status: 200,
+    checks: [
+      ["includes the business account", 'j.data.some((a) => a.account_id === v("businessAccountId"))'],
+      ["only business accounts", 'j.data.every((a) => a.purpose === "business")'],
+    ],
+  }),
+  req("List accounts - unknown purpose filter", "GET", "/accounts?purpose=family", { status: 422 }),
+  req("Update purpose", "PATCH", "/accounts/{{businessAccountId}}", {
+    body: { purpose: "personal" },
+    status: 200,
+    checks: [["now personal", 'j.purpose === "personal"'], ["balance untouched", "j.balance_minor === 0"]],
   }),
   req("Get account", "GET", "/accounts/{{accountId}}", {
     status: 200,

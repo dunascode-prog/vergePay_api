@@ -6,7 +6,7 @@
 ![Express](https://img.shields.io/badge/Express-5-000000?logo=express&logoColor=white)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-17-4169E1?logo=postgresql&logoColor=white)
 ![Flutterwave](https://img.shields.io/badge/Payments-Flutterwave-F5A623)
-![Tests](https://img.shields.io/badge/Postman_suite-664%2F664_passing-2EA44F?logo=postman&logoColor=white)
+![Tests](https://img.shields.io/badge/Postman_suite-676%2F676_passing-2EA44F?logo=postman&logoColor=white)
 
 Built by **[Seyitan Omodara](https://github.com/dunascode-prog)** · Frontend: [vergePay_ui](https://github.com/dunascode-prog/vergePay_ui)
 
@@ -22,7 +22,7 @@ Built by **[Seyitan Omodara](https://github.com/dunascode-prog)** · Frontend: [
 | **Payments** | Flutterwave v3 hosted checkout, card tokenization, 3-D Secure and permanent virtual accounts, verified on the real sandbox |
 | **Investments** | Alpaca brokerage connected with OAuth 2.0; holdings synced by a BullMQ worker on Redis, with retries, backoff and a schedule |
 | **Security** | TOTP 2FA built from the RFC, HttpOnly cookie sessions with one-time refresh tokens, encrypted secrets, PCI-safe card handling |
-| **Testing** | 412-request Postman suite with **664 assertions**, including concurrency races, forged-webhook and OAuth attacks, and background-job retries, all passing |
+| **Testing** | 417-request Postman suite with **676 assertions**, including concurrency races, forged-webhook and OAuth attacks, and background-job retries, all passing |
 
 ---
 
@@ -161,8 +161,8 @@ The full designs are in [`documentation/`](documentation/): the API design (`Fin
 
 | Method | Endpoint | |
 |---|---|---|
-| GET / POST | `/v1/accounts` | List, or open an account (10-digit account number, idempotent) |
-| GET / PATCH | `/v1/accounts/:id` | View, or update declared income. The balance is never editable |
+| GET / POST | `/v1/accounts` | List (filter with `?purpose=personal|business`), or open an account (10-digit account number, idempotent). Each account has a `purpose`, `personal` or `business`, so personal and business money can be shown apart; it's a label only and never changes how money moves |
+| GET / PATCH | `/v1/accounts/:id` | View, or update declared income or `purpose`. The balance is never editable |
 | POST | `/v1/accounts/:id/freeze` · `/unfreeze` · `/close` | Legal transitions only (`409` otherwise). Close needs a zero balance and no loan, open invoice or linked card |
 | GET | `/v1/accounts/:id/transactions` | Cursor-paginated history straight from the ledger, with running balances |
 | GET | `/v1/accounts/:id/balance-history` | Daily, weekly or monthly closing balances for charts |
@@ -247,7 +247,7 @@ The full designs are in [`documentation/`](documentation/): the API design (`Fin
 
 ## Testing
 
-The whole API is exercised by a Postman suite, [`postman/vergepay-api.postman_collection.json`](postman/vergepay-api.postman_collection.json): **412 requests and 664 assertions**, grouped into 11 folders from sign-up to brokerage disconnection. It isn't just happy paths:
+The whole API is exercised by a Postman suite, [`postman/vergepay-api.postman_collection.json`](postman/vergepay-api.postman_collection.json): **417 requests and 676 assertions**, grouped into 11 folders from sign-up to brokerage disconnection. It isn't just happy paths:
 
 - **Every edge case:** validation, wrong owner, wrong state (`409`), insufficient funds, replayed keys, and retries after a simulated crash.
 - **Races:** simultaneous payments, refunds, repayments and sign-ins, fired at the same instant from test scripts.
@@ -263,7 +263,7 @@ npm run flw:stand-in           # terminal 1: Flutterwave stand-in on :9999
 npm run alpaca:stand-in        # terminal 2: Alpaca stand-in on :9998
 npm run start:with-stand-in    # terminal 3: the API, pointed at the stand-ins
 npm run worker:with-stand-in   # terminal 4: the background worker (needs REDIS_URL)
-npm run test:postman           # terminal 5: runs all 412 requests with Newman
+npm run test:postman           # terminal 5: runs all 417 requests with Newman
 ```
 
 Writing the suite also caught real bugs, which were then fixed:
