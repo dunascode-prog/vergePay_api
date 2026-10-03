@@ -6,7 +6,7 @@
 ![Express](https://img.shields.io/badge/Express-5-000000?logo=express&logoColor=white)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-17-4169E1?logo=postgresql&logoColor=white)
 ![Flutterwave](https://img.shields.io/badge/Payments-Flutterwave-F5A623)
-![Tests](https://img.shields.io/badge/Postman_suite-765%2F765_passing-2EA44F?logo=postman&logoColor=white)
+![Tests](https://img.shields.io/badge/Postman_suite-834%2F834_passing-2EA44F?logo=postman&logoColor=white)
 
 Built by **[Seyitan Omodara](https://github.com/dunascode-prog)** · Frontend: [vergePay_ui](https://github.com/dunascode-prog/vergePay_ui)
 
@@ -17,12 +17,13 @@ Built by **[Seyitan Omodara](https://github.com/dunascode-prog)** · Frontend: [
 | | |
 |---|---|
 | **What it is** | A REST API for money: open accounts, move money, lend, invoice, and fund accounts by card or bank transfer |
-| **Endpoints** | 56, across auth, accounts, transactions, loans, invoices, cards, investments, webhooks and back office |
+| **Endpoints** | 59, across auth, accounts, transactions, loans, invoices, cards, investments, notifications, webhooks and back office, plus a live WebSocket |
+| **Live updates** | Debit/credit alerts written in the same DB transaction as the money, pushed over a WebSocket after commit, fanned out across processes with Redis pub/sub |
 | **Money model** | Double-entry ledger in integer minor units (kobo). Balances are cached, but the ledger is the truth |
 | **Payments** | Flutterwave v3 hosted checkout, card tokenization, 3-D Secure and permanent virtual accounts, verified on the real sandbox |
 | **Investments** | Alpaca brokerage connected with OAuth 2.0; holdings synced by a BullMQ worker on Redis, with retries, backoff and a schedule |
 | **Security** | TOTP 2FA built from the RFC, HttpOnly cookie sessions with one-time refresh tokens, encrypted secrets, PCI-safe card handling |
-| **Testing** | 469-request Postman suite with **765 assertions**, including concurrency races, forged-webhook and OAuth attacks, and background-job retries, all passing |
+| **Testing** | 507-request Postman suite with **834 assertions**, including concurrency races, forged-webhook and OAuth attacks, and background-job retries, plus an end-to-end WebSocket check, all passing |
 
 ---
 
@@ -76,6 +77,14 @@ Investment holdings are synced from a user's **Alpaca** brokerage account by a *
 - **Idempotent and ordered:** one job id per link means asking again while a sync is queued returns the same job. A database advisory lock stops a manual sync and a scheduled one from overlapping. Every sync upserts the latest state, and positions the user has sold are removed.
 - **A scheduler** re-syncs every link that's due, every 15 minutes, with exactly one schedule no matter how many workers run.
 
+### Live updates that never lie
+When money moves, the customer's dashboard updates by itself and an alert lands in the bell, like a bank's debit and credit alerts ([`services/notifications.js`](services/notifications.js), [`services/realtime.js`](services/realtime.js), [`realtime/websocketServer.js`](realtime/websocketServer.js)).
+- **Written with the money:** the ledger writes the alerts inside the same DB transaction that moves the money, so an alert exists exactly when the money moved. A unique index means a replayed settlement can never alert twice.
+- **Sent only after commit:** `withTransaction` gained an `afterCommit` hook. Events are published only once the data is committed, so a browser is never told about money that then rolls back.
+- **Any process, any socket:** events travel over Redis pub/sub, so an event raised in the worker or on another API instance reaches the socket wherever it's held. Without Redis they stay in-process, which is enough for one API on a laptop.
+- **Same session, same rules:** the socket authenticates with the same HttpOnly cookie as HTTP. It refuses another site's Origin (cross-site WebSocket hijacking) and a session still waiting for its 2FA code. It closes with `4401` the moment the short-lived token expires, so the browser refreshes and reconnects.
+- **Best effort on top of a durable copy:** `GET /v1/notifications` is the source of truth. A browser that was offline catches up when it reconnects.
+
 ### Loan maths that adds up to the kobo
 Amortization ([`services/amortization.js`](services/amortization.js)) rounds the exact schedule's *cumulative* principal rather than the monthly payment. The naive approach (round the payment, carry the error) visibly drifts on long, small loans, and can pay a loan off early or produce negative principal. The final algorithm was property-tested across **21,681 amount/rate/term combinations**: principal always sums exactly, nothing is ever negative, and every installment is within 2 kobo of the level payment.
 
@@ -105,6 +114,8 @@ flowchart LR
     W -->|"OAuth token from the vault"| ALP["Alpaca"]
     L --> DB[("PostgreSQL<br/>(Supabase)")]
     W --> DB
+    L -->|"after commit: publish"| PS[("Redis<br/>pub/sub")]
+    PS -->|"WebSocket /v1/ws<br/>live alerts and balances"| UI
 ```
 
 ### How a saved-card top-up works
@@ -235,6 +246,19 @@ The full designs are in [`documentation/`](documentation/): the API design (`Fin
 | GET | `/v1/holdings` · `/:id` | Positions with the security nested inline: quantity, average cost, price, value, P/L |
 </details>
 
+<details>
+<summary><b>Notifications and live updates</b>: debit/credit alerts, a WebSocket that keeps the dashboard current</summary>
+
+| Method | Endpoint | |
+|---|---|---|
+| GET | `/v1/notifications` | The customer's alerts, newest first, keyset-paginated (`limit`, `after`, `unread=true`), with the total `unread_count` |
+| POST | `/v1/notifications/:id/read` | Mark one read. Repeating it changes nothing; someone else's alert is a `404` |
+| POST | `/v1/notifications/read-all` | Mark every alert read |
+| GET | `/v1/ws` (WebSocket) | Live events after each commit: `accounts.changed`, `notification.created`, `notifications.read` (other tabs), `user.changed`. Close codes: `4401` refresh and reconnect, `4403` refused, `4429` too many sockets |
+
+An alert is written for every settled movement on a customer's wallet: a credit for the receiver ("Ada Payer sent you ₦1,500.00"), a debit for the sender, and one "moved" alert for transfers between a customer's own wallets. Identity verification decisions get one too.
+</details>
+
 ---
 
 ## Security at a glance
@@ -250,7 +274,7 @@ The full designs are in [`documentation/`](documentation/): the API design (`Fin
 
 ## Testing
 
-The whole API is exercised by a Postman suite, [`postman/vergepay-api.postman_collection.json`](postman/vergepay-api.postman_collection.json): **469 requests and 765 assertions**, grouped into 12 folders from sign-up to brokerage disconnection. It isn't just happy paths:
+The whole API is exercised by a Postman suite, [`postman/vergepay-api.postman_collection.json`](postman/vergepay-api.postman_collection.json): **507 requests and 834 assertions**, grouped into 13 folders from sign-up to brokerage disconnection. It isn't just happy paths:
 
 - **Every edge case:** validation, wrong owner, wrong state (`409`), insufficient funds, replayed keys, and retries after a simulated crash.
 - **Races:** simultaneous payments, refunds, repayments and sign-ins, fired at the same instant from test scripts.
@@ -258,6 +282,7 @@ The whole API is exercised by a Postman suite, [`postman/vergepay-api.postman_co
 - **Provider behaviour on demand:** local stand-ins for Flutterwave and Alpaca ([`postman/flutterwave-stand-in.mjs`](postman/flutterwave-stand-in.mjs), [`postman/alpaca-stand-in.mjs`](postman/alpaca-stand-in.mjs)) produce declines, 3-D Secure, tampered amounts, bank deposits, rate limits, outages and revoked tokens.
 - **The background worker:** each brokerage sync is watched until it finishes, including retries with backoff, giving up after 5 attempts, and the scheduler.
 - **Ledger invariants** checked across the database after each money-moving folder.
+- **Live updates:** Newman can't open sockets, so [`postman/realtime-check.mjs`](postman/realtime-check.mjs) (`npm run test:realtime`) connects real WebSockets for two customers and checks 17 things: who may connect, alerts and balance events arriving live on both sides and in a second tab, a rolled-back transfer sending nothing, one customer never seeing another's events, and refusal after sign-out.
 
 Every request's expected status and checks are listed in **[`postman/EXPECTED_RESULTS.md`](postman/EXPECTED_RESULTS.md)**, generated from the same source as the collection. A second collection runs the real Flutterwave sandbox end to end.
 
@@ -266,7 +291,8 @@ npm run flw:stand-in           # terminal 1: Flutterwave stand-in on :9999
 npm run alpaca:stand-in        # terminal 2: Alpaca stand-in on :9998
 npm run start:with-stand-in    # terminal 3: the API, pointed at the stand-ins
 npm run worker:with-stand-in   # terminal 4: the background worker (needs REDIS_URL)
-npm run test:postman           # terminal 5: runs all 469 requests with Newman
+npm run test:postman           # terminal 5: runs all 507 requests with Newman
+npm run test:realtime          # then: the live WebSocket checks (API_URL=... for another port)
 ```
 
 Writing the suite also caught real bugs, which were then fixed:
@@ -302,7 +328,8 @@ npm run worker          # the background worker (brokerage syncs), in another te
 | `FLW_SECRET_KEY`, `FLW_PUBLIC_KEY` | Flutterwave v3 keys (use test keys: `FLWSECK_TEST-…`) |
 | `FLW_SECRET_HASH` | The webhook secret hash set in the Flutterwave dashboard |
 | `FLW_REDIRECT_URL` | Where checkout returns the customer; must be public `https` for saved-card charges |
-| `REDIS_URL` | Redis for the job queue, e.g. a free [Upstash](https://upstash.com) `rediss://` URL |
+| `REDIS_URL` | Redis for the job queue and for live events between processes, e.g. a free [Upstash](https://upstash.com) `rediss://` URL |
+| `WS_ALLOWED_ORIGINS` | Web app origins allowed to open the live-updates WebSocket, comma-separated (default: `CORS_ORIGIN`) |
 | `VAULT_ENCRYPTION_KEY` | 64 hex characters; encrypts brokerage tokens in the vault |
 | `ALPACA_CLIENT_ID`, `ALPACA_CLIENT_SECRET` | From your Alpaca OAuth app (Connect → My Developed Apps) |
 | `ALPACA_REDIRECT_URI` | Must match the app's redirect URI, e.g. `http://localhost:8000/v1/brokerage-links/oauth/callback` |
@@ -318,7 +345,9 @@ Card and bank-transfer endpoints answer `503` until the Flutterwave keys are set
 vergePay_api/
 ├── controllers/     request handlers: accounts, transactions, loans, invoices, cards, investments, webhooks, 2FA
 ├── services/        ledger.js (money posting), amortization.js, flutterwave.js, processorPayments.js,
-│                    alpaca.js, brokerageSync.js, queue.js (BullMQ), vault.js
+│                    alpaca.js, brokerageSync.js, queue.js (BullMQ), vault.js,
+│                    notifications.js (alerts), realtime.js (Redis pub/sub event bus)
+├── realtime/        the WebSocket server for live updates (/v1/ws)
 ├── worker.js        the background worker (npm run worker)
 ├── routes/          Express routers, one per resource
 ├── utils/           idempotency, rate limits, TOTP, encryption, sessions, pagination, validation
@@ -344,7 +373,7 @@ vergePay_api/
 
 ## Roadmap
 
-Built so far: auth and 2FA, accounts, the ledger and transfers, loans, invoices and refunds, cards and bank-transfer funding, and investments with a background brokerage sync. Next:
+Built so far: auth and 2FA, accounts, the ledger and transfers, loans, invoices and refunds, cards and bank-transfer funding, investments with a background brokerage sync, and in-app alerts with live WebSocket updates. Next:
 
 - [ ] Staff accounts with roles for the back office, replacing the internal key; KYC review and audit-log search
 - [ ] Automated reconciliation against Flutterwave settlement reports, and chargeback handling

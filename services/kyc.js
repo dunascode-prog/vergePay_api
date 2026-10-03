@@ -2,6 +2,7 @@ import { withTransaction } from "../db/withTransaction.js";
 import env from "../env.js";
 import logger from "../logger.js";
 import { writeAudit } from "../utils/audit.js";
+import { recordUserNotification } from "./notifications.js";
 
 // Identity verification (API doc 3.2). A submission is recorded as pending;
 // the verdict comes later, from a provider, and applyKycDecision() writes it.
@@ -64,6 +65,13 @@ export async function applyKycDecision(kycId, { approved, reason = null, decided
         submission.user_id,
       ]);
     }
+    await recordUserNotification(
+      client,
+      submission.user_id,
+      approved
+        ? { kind: "kyc_approved", title: "Your identity is verified", body: "You can now add, send and transfer money." }
+        : { kind: "kyc_rejected", title: "We couldn't verify your identity", body: reason ?? "Check your details and try again." },
+    );
     await writeAudit(client, {
       actorId: null,
       entityType: "kyc_verification",

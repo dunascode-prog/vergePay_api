@@ -15,6 +15,7 @@
     "worker:with-stand-in": "node postman/start-worker-with-stand-in.mjs",
     "start:flw-sandbox": "node postman/start-api-for-sandbox.mjs",
     "test:postman": "node postman/run-suite.mjs",
+    "test:realtime": "node postman/realtime-check.mjs",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "dunascode",
@@ -40,6 +41,7 @@
     "bullmq": "^6.3.9",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
-    "ioredis": "^5.11.1"
+    "ioredis": "^5.11.1",
+    "ws": "^8.22.0"
   }
 }
