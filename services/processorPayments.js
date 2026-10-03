@@ -4,6 +4,7 @@ import logger from "../logger.js";
 import AppError from "../utils/appError.js";
 import { writeAudit } from "../utils/audit.js";
 import * as flutterwave from "./flutterwave.js";
+import { emailReceipt, settleInvoice } from "./invoices.js";
 import { failPendingTransaction, postTransaction, settlePendingTransaction } from "./ledger.js";
 
 // Turns a payment-processor outcome into ledger movements. Both the webhook
@@ -131,18 +132,19 @@ function mismatch(txn, verified) {
   return null;
 }
 
-// Re-checks one of our pending card payments with Flutterwave and settles
-// or fails it. Safe to call any number of times. Returns the transaction's
-// current state and, for a card link, the link.
+// Re-checks one of our pending checkout payments with Flutterwave and
+// settles or fails it: a card payment (top-up or card link), or an invoice
+// paid on its pay link. Safe to call any number of times. Returns the
+// transaction's current state and, for a card link, the link.
 export async function syncCardPayment(transactionId) {
   const found = await pool.query(
     `SELECT transaction_id, status, processor_tx_ref, processor_transaction_id,
-            amount_minor, currency_code, transaction_type
+            amount_minor, currency_code, transaction_type, invoice_id
      FROM transactions WHERE transaction_id = $1`,
     [transactionId],
   );
   const txn = found.rows[0];
-  if (!txn || txn.transaction_type !== "card_payment" || !txn.processor_tx_ref) return null;
+  if (!txn || !["card_payment", "invoice_payment"].includes(txn.transaction_type) || !txn.processor_tx_ref) return null;
   if (txn.status !== "pending") return currentState(transactionId);
 
   let verified;
@@ -164,6 +166,18 @@ export async function syncCardPayment(transactionId) {
 
   await withTransaction(async (client) => {
     const processorTransactionId = verified.id != null ? String(verified.id) : null;
+    // an invoice is locked before the accounts, the order paying from a
+    // wallet uses, so the two can't deadlock
+    const invoiceRow = txn.invoice_id
+      ? (
+          await client.query(
+            `SELECT i.*, c.email AS client_email FROM invoices i
+             LEFT JOIN clients c ON c.client_id = i.client_id
+             WHERE i.invoice_id = $1 FOR UPDATE OF i`,
+            [txn.invoice_id],
+          )
+        ).rows[0]
+      : null;
     const linkRow = await client.query(`SELECT * FROM card_links WHERE transaction_id = $1 FOR UPDATE`, [
       transactionId,
     ]);
@@ -202,7 +216,17 @@ export async function syncCardPayment(transactionId) {
       }
       return;
     }
-    if (settled.alreadyFinal || !link) return;
+    if (settled.alreadyFinal) return;
+    if (invoiceRow) {
+      const paidByEmail = verified.customer?.email ?? null;
+      const settledIt = await settleInvoice(client, invoiceRow, settled, {
+        paidByName: verified.customer?.name ?? null,
+        paidByEmail,
+      });
+      if (settledIt) await emailReceipt(client, invoiceRow.invoice_id, paidByEmail ?? invoiceRow.client_email);
+      return;
+    }
+    if (!link) return;
 
     const { cardId, failure } = await attachLinkedCard(client, link, verified, settled);
     await client.query(

@@ -41,6 +41,7 @@ const TRANSACTION_COLUMNS = `
     card_id,
     processor_tx_ref,
     processor_transaction_id,
+    invoice_id,
     failure_reason,
     created_at,
     settled_at`;
@@ -138,6 +139,7 @@ async function insertPending(
     cardId = null,
     processorTxRef = null,
     processorTransactionId = null,
+    invoiceId = null,
   },
 ) {
   const inserted = await client.query(
@@ -154,9 +156,10 @@ async function insertPending(
         loan_id,
         card_id,
         processor_tx_ref,
-        processor_transaction_id
+        processor_transaction_id,
+        invoice_id
      )
-     VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, $8, $9, $10, $11, $12)
+     VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, $8, $9, $10, $11, $12, $13)
      RETURNING ${TRANSACTION_COLUMNS}`,
     [
       idempotencyKey,
@@ -171,6 +174,7 @@ async function insertPending(
       cardId,
       processorTxRef,
       processorTransactionId,
+      invoiceId,
     ],
   );
   return inserted.rows[0];

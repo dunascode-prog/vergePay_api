@@ -11,7 +11,8 @@ import env from "./env.js";
 import logger from "./logger.js";
 import { BrokerageAuthError } from "./services/alpaca.js";
 import { dueLinkIds, expireLink, setSyncStatus, syncLink } from "./services/brokerageSync.js";
-import { BROKERAGE_QUEUE, brokerageQueue, enqueueLinkSync, redisConnection } from "./services/queue.js";
+import { deliverEmail } from "./services/email.js";
+import { BROKERAGE_QUEUE, EMAIL_QUEUE, brokerageQueue, enqueueLinkSync, redisConnection } from "./services/queue.js";
 
 await connectDB();
 
@@ -74,8 +75,21 @@ await brokerageQueue().upsertJobScheduler(
   { name: "sync-all-links", opts: { attempts: 1, removeOnComplete: true, removeOnFail: true } },
 );
 
+// Outgoing email: invoices, reminders and receipts (services/email.js).
+const emailWorker = new Worker(
+  EMAIL_QUEUE,
+  async (job) => {
+    if (job.name !== "send-email") throw new UnrecoverableError(`Unknown job ${job.name}`);
+    const lastAttempt = job.attemptsMade + 1 >= (job.opts.attempts ?? 1);
+    await deliverEmail(job.data.emailId, { lastAttempt });
+  },
+  { connection: redisConnection(), concurrency: 5, drainDelay: 30, stalledInterval: 120_000 },
+);
+emailWorker.on("ready", () => console.log(`worker ready: ${EMAIL_QUEUE}`));
+emailWorker.on("error", (err) => logger.error({ message: "email worker error", error: err.message }));
+
 async function shutdown() {
-  await worker.close();
+  await Promise.all([worker.close(), emailWorker.close()]);
   await brokerageQueue().close();
   process.exit(0);
 }

@@ -6,7 +6,7 @@
 ![Express](https://img.shields.io/badge/Express-5-000000?logo=express&logoColor=white)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-17-4169E1?logo=postgresql&logoColor=white)
 ![Flutterwave](https://img.shields.io/badge/Payments-Flutterwave-F5A623)
-![Tests](https://img.shields.io/badge/Postman_suite-834%2F834_passing-2EA44F?logo=postman&logoColor=white)
+![Tests](https://img.shields.io/badge/Postman_suite-1019%2F1019_passing-2EA44F?logo=postman&logoColor=white)
 
 Built by **[Seyitan Omodara](https://github.com/dunascode-prog)** · Frontend: [vergePay_ui](https://github.com/dunascode-prog/vergePay_ui)
 
@@ -16,14 +16,14 @@ Built by **[Seyitan Omodara](https://github.com/dunascode-prog)** · Frontend: [
 
 | | |
 |---|---|
-| **What it is** | A REST API for money: open accounts, move money, lend, invoice, and fund accounts by card or bank transfer |
-| **Endpoints** | 59, across auth, accounts, transactions, loans, invoices, cards, investments, notifications, webhooks and back office, plus a live WebSocket |
+| **What it is** | A REST API for money: open accounts, move money, lend, invoice clients (who pay through a link), and fund accounts by card or bank transfer |
+| **Endpoints** | 72, across auth, accounts, transactions, loans, invoices, clients, public pay links, cards, investments, notifications, webhooks and back office, plus a live WebSocket |
 | **Live updates** | Debit/credit alerts written in the same DB transaction as the money, pushed over a WebSocket after commit, fanned out across processes with Redis pub/sub |
 | **Money model** | Double-entry ledger in integer minor units (kobo). Balances are cached, but the ledger is the truth |
 | **Payments** | Flutterwave v3 hosted checkout, card tokenization, 3-D Secure and permanent virtual accounts, verified on the real sandbox |
 | **Investments** | Alpaca brokerage connected with OAuth 2.0; holdings synced by a BullMQ worker on Redis, with retries, backoff and a schedule |
 | **Security** | TOTP 2FA built from the RFC, HttpOnly cookie sessions with one-time refresh tokens, encrypted secrets, PCI-safe card handling |
-| **Testing** | 507-request Postman suite with **834 assertions**, including concurrency races, forged-webhook and OAuth attacks, and background-job retries, plus an end-to-end WebSocket check, all passing |
+| **Testing** | 616-request Postman suite with **1,019 assertions**, including concurrency races, forged-webhook and OAuth attacks, and background-job retries, plus an end-to-end WebSocket check, all passing |
 
 ---
 
@@ -84,6 +84,15 @@ When money moves, the customer's dashboard updates by itself and an alert lands 
 - **Any process, any socket:** events travel over Redis pub/sub, so an event raised in the worker or on another API instance reaches the socket wherever it's held. Without Redis they stay in-process, which is enough for one API on a laptop.
 - **Same session, same rules:** the socket authenticates with the same HttpOnly cookie as HTTP. It refuses another site's Origin (cross-site WebSocket hijacking) and a session still waiting for its 2FA code. It closes with `4401` the moment the short-lived token expires, so the browser refreshes and reconnects.
 - **Best effort on top of a durable copy:** `GET /v1/notifications` is the source of truth. A browser that was offline catches up when it reconnects.
+
+### Invoices anyone can pay
+A freelancer's clients mostly aren't on VergePay, so an invoice goes to a client from a client book and is paid through a link, like a hosted invoice ([`services/invoices.js`](services/invoices.js), [`controllers/payLinkController.js`](controllers/payLinkController.js)).
+- **Drafts, then numbers:** an invoice is an editable draft until it's sent. Sending gives it the issuer's next number (`INV-0001`); numbers are handed out at send time, so deleted drafts leave no gaps.
+- **Line items to the kobo:** quantity × price is worked out in integers and rounded half up, and the invariant check proves every invoice's total equals its items.
+- **A capability link:** the pay link carries 256 random bits and opens that one invoice and nothing else. The page shows who's billing, what for and how much, never account numbers or emails, and it's rate-limited per link.
+- **Paid like a card top-up:** checkout is a pending payment from the processor's clearing account into the issuer's wallet. It settles only after Flutterwave's verify endpoint agrees on reference, currency and amount, and the invoice is marked paid in that same DB transaction. Webhook or redirect, whichever arrives first, does it once.
+- **Two payers at once:** if a second payment lands after the invoice is paid, the money is still credited (it really arrived) and the issuer is alerted to return it. Nothing is silently lost.
+- **Email that can't block a request:** invoices, reminders and receipts are saved exactly as sent (`email_log`), then delivered by the worker with retries. Any SMTP service works; development uses Ethereal's free fake inboxes, with a preview link per message.
 
 ### Loan maths that adds up to the kobo
 Amortization ([`services/amortization.js`](services/amortization.js)) rounds the exact schedule's *cumulative* principal rather than the monthly payment. The naive approach (round the payment, carry the error) visibly drifts on long, small loans, and can pay a loan off early or produce negative principal. The final algorithm was property-tested across **21,681 amount/rate/term combinations**: principal always sums exactly, nothing is ever negative, and every installment is within 2 kobo of the level payment.
@@ -208,15 +217,25 @@ The full designs are in [`documentation/`](documentation/): the API design (`Fin
 </details>
 
 <details>
-<summary><b>Invoices</b>: bill another VergePay user, get paid, refund</summary>
+<summary><b>Invoices, clients and pay links</b>: bill anyone, email it, get paid by card, bank transfer or wallet</summary>
 
 | Method | Endpoint | |
 |---|---|---|
-| POST / GET | `/v1/invoices` | Issue an invoice to an account number; list issued or received, filter by status, cursor pagination |
-| GET | `/v1/invoices/:id` | Visible to the issuer and the billed user only. Overdue is derived, never stale |
-| POST | `/v1/invoices/:id/pay` | The billed user pays; a real transaction settles it |
-| POST | `/v1/invoices/:id/cancel` | Issuer or back office. Cancelling a paid invoice is a `409` |
-| POST | `/v1/invoices/:id/refund` | Full refund back to whoever paid, exactly once |
+| POST / GET | `/v1/clients` | The client book (name, email, phone), with each client's invoice count and outstanding total. Clients don't need VergePay |
+| GET / PATCH / DELETE | `/v1/clients/:id` | Edit; delete archives (hidden from pickers, invoices kept) |
+| POST | `/v1/invoices` | To a client, with line items: saved as a draft, or sent at once (`send: true`). Or to a VergePay account number, sent at once |
+| GET | `/v1/invoices` | Issued or received, filter by status or client, cursor pagination. Overdue is derived, never stale |
+| GET | `/v1/invoices/:id` | Visible to the issuer and the billed user only; the issuer also sees every email sent about it |
+| PATCH / DELETE | `/v1/invoices/:id` | Drafts only |
+| POST | `/v1/invoices/:id/send` | Draft → open: number (`INV-0001`, per issuer), pay link, email to the client |
+| POST | `/v1/invoices/:id/remind` | Emails the client again, at most once an hour |
+| POST | `/v1/invoices/:id/pay` | The billed VergePay user pays from a wallet; a real transaction settles it |
+| POST | `/v1/invoices/:id/cancel` | Issuer or back office; the pay link stops working. Cancelling a paid invoice is a `409` |
+| POST | `/v1/invoices/:id/refund` | Full refund of a wallet payment, exactly once |
+| GET | `/v1/pay/:token` | **Public.** What the payer sees: who, what, how much, by when. No account numbers or emails |
+| POST | `/v1/pay/:token/checkout` | **Public.** Starts Flutterwave checkout (card, bank transfer, USSD) for the full amount |
+| POST | `/v1/pay/:token/sync` | **Public.** After checkout: verifies with Flutterwave and settles. Safe to repeat |
+| POST | `/v1/pay/:token/wallet` | A signed-in VergePay customer pays from their wallet |
 </details>
 
 <details>
@@ -274,7 +293,7 @@ An alert is written for every settled movement on a customer's wallet: a credit 
 
 ## Testing
 
-The whole API is exercised by a Postman suite, [`postman/vergepay-api.postman_collection.json`](postman/vergepay-api.postman_collection.json): **507 requests and 834 assertions**, grouped into 13 folders from sign-up to brokerage disconnection. It isn't just happy paths:
+The whole API is exercised by a Postman suite, [`postman/vergepay-api.postman_collection.json`](postman/vergepay-api.postman_collection.json): **616 requests and 1,019 assertions**, grouped into 14 folders from sign-up to brokerage disconnection. It isn't just happy paths:
 
 - **Every edge case:** validation, wrong owner, wrong state (`409`), insufficient funds, replayed keys, and retries after a simulated crash.
 - **Races:** simultaneous payments, refunds, repayments and sign-ins, fired at the same instant from test scripts.
@@ -282,6 +301,7 @@ The whole API is exercised by a Postman suite, [`postman/vergepay-api.postman_co
 - **Provider behaviour on demand:** local stand-ins for Flutterwave and Alpaca ([`postman/flutterwave-stand-in.mjs`](postman/flutterwave-stand-in.mjs), [`postman/alpaca-stand-in.mjs`](postman/alpaca-stand-in.mjs)) produce declines, 3-D Secure, tampered amounts, bank deposits, rate limits, outages and revoked tokens.
 - **The background worker:** each brokerage sync is watched until it finishes, including retries with backoff, giving up after 5 attempts, and the scheduler.
 - **Ledger invariants** checked across the database after each money-moving folder.
+- **Invoicing clients:** drafts and their rounding, sending and email (built but not sent: `EMAIL_TRANSPORT=json`), the reminder throttle, what the public pay page hides, checkout paid, declined, tampered and paid twice at once, the webhook, cancelling, and paying a link from a wallet.
 - **Live updates:** Newman can't open sockets, so [`postman/realtime-check.mjs`](postman/realtime-check.mjs) (`npm run test:realtime`) connects real WebSockets for two customers and checks 17 things: who may connect, alerts and balance events arriving live on both sides and in a second tab, a rolled-back transfer sending nothing, one customer never seeing another's events, and refusal after sign-out.
 
 Every request's expected status and checks are listed in **[`postman/EXPECTED_RESULTS.md`](postman/EXPECTED_RESULTS.md)**, generated from the same source as the collection. A second collection runs the real Flutterwave sandbox end to end.
@@ -291,7 +311,7 @@ npm run flw:stand-in           # terminal 1: Flutterwave stand-in on :9999
 npm run alpaca:stand-in        # terminal 2: Alpaca stand-in on :9998
 npm run start:with-stand-in    # terminal 3: the API, pointed at the stand-ins
 npm run worker:with-stand-in   # terminal 4: the background worker (needs REDIS_URL)
-npm run test:postman           # terminal 5: runs all 507 requests with Newman
+npm run test:postman           # terminal 5: runs all 616 requests with Newman
 npm run test:realtime          # then: the live WebSocket checks (API_URL=... for another port)
 ```
 
@@ -329,6 +349,9 @@ npm run worker          # the background worker (brokerage syncs), in another te
 | `FLW_SECRET_HASH` | The webhook secret hash set in the Flutterwave dashboard |
 | `FLW_REDIRECT_URL` | Where checkout returns the customer; must be public `https` for saved-card charges |
 | `REDIS_URL` | Redis for the job queue and for live events between processes, e.g. a free [Upstash](https://upstash.com) `rediss://` URL |
+| `APP_URL` | The web app's public address, used in pay links and emails (default: `CORS_ORIGIN`) |
+| `SMTP_URL` | Outgoing email, e.g. Brevo's free plan: `smtp://<login>:<smtp key>@smtp-relay.brevo.com:587`. Unset in development: Ethereal test inboxes |
+| `EMAIL_FROM` | The sender, e.g. `VergePay <invoices@yourdomain.com>` (must be a sender your SMTP service has verified) |
 | `WS_ALLOWED_ORIGINS` | Web app origins allowed to open the live-updates WebSocket, comma-separated (default: `CORS_ORIGIN`) |
 | `VAULT_ENCRYPTION_KEY` | 64 hex characters; encrypts brokerage tokens in the vault |
 | `ALPACA_CLIENT_ID`, `ALPACA_CLIENT_SECRET` | From your Alpaca OAuth app (Connect → My Developed Apps) |
@@ -346,7 +369,8 @@ vergePay_api/
 ├── controllers/     request handlers: accounts, transactions, loans, invoices, cards, investments, webhooks, 2FA
 ├── services/        ledger.js (money posting), amortization.js, flutterwave.js, processorPayments.js,
 │                    alpaca.js, brokerageSync.js, queue.js (BullMQ), vault.js,
-│                    notifications.js (alerts), realtime.js (Redis pub/sub event bus)
+│                    notifications.js (alerts), realtime.js (Redis pub/sub event bus),
+│                    invoices.js, invoiceEmails.js, email.js (SMTP via the worker)
 ├── realtime/        the WebSocket server for live updates (/v1/ws)
 ├── worker.js        the background worker (npm run worker)
 ├── routes/          Express routers, one per resource
@@ -373,7 +397,7 @@ vergePay_api/
 
 ## Roadmap
 
-Built so far: auth and 2FA, accounts, the ledger and transfers, loans, invoices and refunds, cards and bank-transfer funding, investments with a background brokerage sync, and in-app alerts with live WebSocket updates. Next:
+Built so far: auth and 2FA, accounts, the ledger and transfers, loans, invoices (to clients outside VergePay, with pay links and email) and refunds, cards and bank-transfer funding, investments with a background brokerage sync, and in-app alerts with live WebSocket updates. Next:
 
 - [ ] Staff accounts with roles for the back office, replacing the internal key; KYC review and audit-log search
 - [ ] Automated reconciliation against Flutterwave settlement reports, and chargeback handling

@@ -75,6 +75,32 @@ export const moneyLimiter = rateLimit({
   },
 });
 
+// Public invoice pay links (routes/payLinkRoutes.js), keyed per link: a
+// pay page is opened by its client, and requests arrive through the web
+// app's proxy, so a per-IP key would put every payer in one bucket.
+export const payLinkLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 120,
+  keyGenerator: (req) => `pay:${req.params.token}`,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req, res, next) => {
+    next(new TooManyRequestsError({ message: "Too many requests for this payment link. Please wait a few minutes." }));
+  },
+});
+
+// Starting a checkout creates a payment at Flutterwave, so far fewer.
+export const payLinkCheckoutLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  keyGenerator: (req) => `checkout:${req.params.token}`,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req, res, next) => {
+    next(new TooManyRequestsError({ message: "Too many payment attempts for this invoice. Please wait a few minutes." }));
+  },
+});
+
 // Account-name lookups: enough for anyone sending money, too few to harvest
 // names by walking through account numbers. Per signed-in user.
 export const lookupLimiter = rateLimit({

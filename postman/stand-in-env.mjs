@@ -37,3 +37,5 @@ process.env.BROKERAGE_RETURN_URL =
 // re-syncs getting in the way of a run
 process.env.BROKERAGE_RETRY_DELAY_MS = "300";
 process.env.BROKERAGE_SYNC_INTERVAL_MS = String(60 * 60 * 1000);
+// emails are built and logged but never sent (email_log shows them as sent)
+process.env.EMAIL_TRANSPORT = "json";

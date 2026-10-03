@@ -46,7 +46,9 @@ function creditText(txn, amount, mine, other) {
     case "loan_disbursement":
       return { title: `Your loan of ${amount} has been paid out`, body: into };
     case "invoice_payment":
-      return { title: `${from ?? "A customer"} paid your invoice: ${amount}`, body: into };
+      // description: "Invoice INV-0003 · TechCorp"; a pay-link payment has no
+      // VergePay sender, so the invoice names who paid
+      return { title: `Invoice paid: ${amount}${from ? ` by ${from}` : ""}`, body: withNote(into, txn.description) };
     case "refund":
       return { title: `Refund of ${amount}${from ? ` from ${from}` : ""}`, body: into };
     default:
@@ -63,7 +65,7 @@ function debitText(txn, amount, mine, other) {
     case "loan_repayment":
       return { title: `Loan repayment of ${amount}`, body: withNote(outOf, txn.description) };
     case "invoice_payment":
-      return { title: `You paid ${amount}${to ? ` to ${to}` : ""}`, body: withNote(outOf, "Invoice payment") };
+      return { title: `You paid ${amount}${to ? ` to ${to}` : ""}`, body: withNote(outOf, txn.description ?? "Invoice payment") };
     case "refund":
       return { title: `You refunded ${amount}${to ? ` to ${to}` : ""}`, body: outOf };
     case "fee":

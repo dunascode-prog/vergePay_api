@@ -50,7 +50,8 @@ async function handleChargeCompleted(data) {
   if (!txRef) return { outcome: "ignored", note: "no tx_ref" };
 
   const payment = await pool.query(
-    `SELECT transaction_id FROM transactions WHERE processor_tx_ref = $1 AND transaction_type = 'card_payment'`,
+    `SELECT transaction_id FROM transactions
+     WHERE processor_tx_ref = $1 AND transaction_type IN ('card_payment', 'invoice_payment')`,
     [txRef],
   );
   if (payment.rows[0]) {

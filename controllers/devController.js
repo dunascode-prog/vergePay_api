@@ -268,10 +268,17 @@ export async function checkInvariants(req, res) {
        WHERE t.status = 'settled' AND t.transaction_type IN ('card_payment', 'bank_deposit')
          AND (SELECT count(*) FROM ledger_entries le WHERE le.transaction_id = t.transaction_id) <> 2
       )::int AS settled_processor_money_without_entries,
+      -- everything paid through Flutterwave (card top-ups, bank deposits,
+      -- invoices paid on the pay page) leaves its clearing account
       (SELECT COALESCE(sum(a.balance_minor), 0) + COALESCE((
-         SELECT sum(amount_minor) FROM transactions
-         WHERE status = 'settled' AND transaction_type IN ('card_payment', 'bank_deposit')), 0)
-       FROM account a WHERE a.account_number LIKE 'SYS-FLW-%')::bigint AS processor_clearing_drift
+         SELECT sum(t.amount_minor) FROM transactions t
+         JOIN account s ON s.account_id = t.sender_account_id
+         WHERE t.status = 'settled' AND s.account_number LIKE 'SYS-FLW-%'), 0)
+       FROM account a WHERE a.account_number LIKE 'SYS-FLW-%')::bigint AS processor_clearing_drift,
+      (SELECT count(*) FROM invoices i
+       WHERE EXISTS (SELECT 1 FROM invoice_items it WHERE it.invoice_id = i.invoice_id)
+         AND i.amount_due_minor <> (SELECT sum(it.amount_minor) FROM invoice_items it WHERE it.invoice_id = i.invoice_id)
+      )::int AS invoice_items_mismatch
   `);
   const checks = result.rows[0];
   return res.status(200).json({
