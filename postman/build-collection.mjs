@@ -1910,6 +1910,283 @@ const notifications = [
 ];
 
 // ---------------------------------------------------------------------------
+// Invoicing clients: the client book, drafts with line items, sending with
+// a pay link and email, reminders, and the public pay page (Flutterwave
+// checkout through the stand-in, or a VergePay wallet).
+
+// Polls an invoice until its emails are in the state wanted (the worker
+// sends them), then checks it.
+function waitForInvoice(name, invoiceVar, { until, checks, description }) {
+  return req(name, "GET", `/invoices/{{${invoiceVar}}}`, {
+    status: 200,
+    description: description ?? "Polls the invoice (up to 20 seconds) until the worker has sent its email.",
+    extraCheckLabels: checks.map(([label]) => label),
+    tests: [
+      "const started = Date.now();",
+      `const poll = () => pm.sendRequest({ url: pm.variables.replaceIn("{{baseUrl}}/invoices/{{${invoiceVar}}}"), method: "GET" }, (err, res) => {`,
+      "  const s = res.json();",
+      `  const done = (${until});`,
+      "  if (!done && Date.now() - started < 20000) return setTimeout(poll, 400);",
+      ...checks.map(([label, expr]) => `  pm.test(${JSON.stringify(label)}, () => pm.expect(Boolean(${expr}), JSON.stringify(s)).to.be.true);`),
+      "});",
+      "poll();",
+    ],
+  });
+}
+
+const designItems = [
+  { description: "Logo design", quantity: 1, unit_amount_minor: 15000000 },
+  { description: "Revisions (hours)", quantity: 2.5, unit_amount_minor: 2000000 },
+];
+const clientInvoice = (name, extra, opts) =>
+  req(name, "POST", "/invoices", {
+    body: { issuer_account_id: "{{ciBusinessId}}", client_id: "{{ciClientId}}", items: designItems, due_date: "{{dueDate}}", ...extra },
+    ...opts,
+  });
+const payPage = (name, opts) => req(name, "GET", "/pay/{{ciPayToken}}", opts);
+const checkout = (name, tokenVar, save, opts = {}) =>
+  req(name, "POST", `/pay/{{${tokenVar}}}/checkout`, {
+    body: { email: "accounts@techcorp.test", name: "TechCorp Accounts" },
+    status: 201,
+    save: [
+      [save, "j.transaction_id"],
+      [`${save}Ref`, 'j.checkout_url.split("flwlnk-mock-")[1]'],
+    ],
+    checks: [["a Flutterwave checkout", 'j.checkout_url.startsWith("https://checkout.flutterwave.com/") && typeof j.transaction_id === "string"']],
+    ...opts,
+  });
+const syncPay = (name, tokenVar, txnVar, opts) =>
+  req(name, "POST", `/pay/{{${tokenVar}}}/sync`, { body: { transaction_id: `{{${txnVar}}}` }, status: 200, ...opts });
+
+const clientInvoicing = [
+  ...newUser("freelancer", "the freelancer (Kemi)"),
+  req("Kemi: set her name", "PATCH", "/users/me", { body: { first_name: "Kemi", last_name: "Adeyemi" }, status: 200 }),
+  kycVerify(),
+  openAccount("Kemi: personal wallet", "ciPersonalId"),
+  openAccount("Kemi: business wallet (invoices are paid in here)", "ciBusinessId", { purpose: "business" }),
+  req("A due date two weeks out", "GET", "/users/me", {
+    status: 200,
+    pre: ['const d = new Date(Date.now() + 14 * 86400000); pm.collectionVariables.set("dueDate", d.toISOString().slice(0, 10));'],
+  }),
+
+  // the client book
+  req("Client - no name", "POST", "/clients", { body: { name: " " }, status: 422, checks: [["name flagged", "Boolean(j.error.details.name)"]] }),
+  req("Client - bad email", "POST", "/clients", { body: { name: "TechCorp", email: "not-an-email" }, status: 422, checks: [["email flagged", "Boolean(j.error.details.email)"]] }),
+  req("Client - bad phone", "POST", "/clients", { body: { name: "TechCorp", phone: "call me" }, status: 422 }),
+  req("Add client TechCorp", "POST", "/clients", {
+    body: { name: "TechCorp", email: "Billing@TechCorp.test", phone: "+234 803 000 0000" },
+    status: 201,
+    save: [["ciClientId", "j.client_id"]],
+    checks: [["saved, email lowercased, nothing invoiced yet", 'j.name === "TechCorp" && j.email === "billing@techcorp.test" && j.invoice_count === 0 && j.outstanding.length === 0']],
+  }),
+  req("Same email again (any case)", "POST", "/clients", { body: { name: "TechCorp Ltd", email: "BILLING@techcorp.test" }, status: 409, checks: [["email flagged", 'j.error.field === "email"']] }),
+  req("Add client Bloom Bakery (no email)", "POST", "/clients", { body: { name: "Bloom Bakery" }, status: 201, save: [["ciNoEmailClientId", "j.client_id"]] }),
+  req("List clients (A to Z)", "GET", "/clients", { status: 200, checks: [["Bloom then TechCorp", 'j.data.length === 2 && j.data[0].name === "Bloom Bakery" && j.data[1].name === "TechCorp"']] }),
+  req("Search clients", "GET", "/clients?q=tech", { status: 200, checks: [["just TechCorp", 'j.data.length === 1 && j.data[0].client_id === v("ciClientId")']] }),
+  req("Update a client", "PATCH", "/clients/{{ciNoEmailClientId}}", { body: { phone: "08030000001" }, status: 200, checks: [["phone saved", 'j.phone === "08030000001" && j.email === null']] }),
+  req("Update - nothing", "PATCH", "/clients/{{ciNoEmailClientId}}", { body: {}, status: 400 }),
+  req("Unknown client", "GET", "/clients/00000000-0000-4000-8000-000000000000", { status: 404 }),
+
+  // drafts
+  clientInvoice("Invoice - no items", { items: [] }, { status: 422, checks: [["items flagged", "Boolean(j.error.details.items)"]] }),
+  clientInvoice("Invoice - three decimals of quantity", { items: [{ description: "x", quantity: 1.005, unit_amount_minor: 100 }] }, { status: 422 }),
+  clientInvoice("Invoice - zero price", { items: [{ description: "x", quantity: 1, unit_amount_minor: 0 }] }, { status: 422 }),
+  clientInvoice("Invoice - unknown client", { client_id: "00000000-0000-4000-8000-000000000000" }, { status: 422, checks: [["client flagged", "Boolean(j.error.details.client_id)"]] }),
+  clientInvoice("Invoice - due date in the past", { due_date: "2020-01-01" }, { status: 422, checks: [["due_date flagged", "Boolean(j.error.details.due_date)"]] }),
+  clientInvoice("Invoice - an amount as well as items", { amount_due_minor: 100 }, { status: 422 }),
+  clientInvoice("Create a draft for TechCorp", { notes: "Bank details on the pay page." }, {
+    status: 201,
+    save: [["ciInvoiceId", "j.invoice_id"]],
+    checks: [
+      ["a draft: no number or pay link yet", 'j.invoice_status === "draft" && j.invoice_number === null && j.pay_url === null && j.sent_at === null'],
+      ["total = 1 × ₦150,000 + 2.5 × ₦20,000 = ₦200,000", 'j.amount_due_minor === 20000000 && j.currency_code === "NGN" && j.items.length === 2 && j.items[1].quantity === 2.5 && j.items[1].amount_minor === 5000000'],
+      ["addressed to TechCorp, issued by me", 'j.client.name === "TechCorp" && j.client.email === "billing@techcorp.test" && j.direction === "issued" && j.account_id === null'],
+    ],
+  }),
+  req("Edit the draft: odd quantities round to the kobo", "PATCH", "/invoices/{{ciInvoiceId}}", {
+    body: { items: [{ description: "Consulting", quantity: 0.33, unit_amount_minor: 1001 }] },
+    status: 200,
+    checks: [["0.33 × 1001 = 330.33 → 330 kobo", "j.amount_due_minor === 330 && j.items.length === 1 && j.items[0].amount_minor === 330"]],
+  }),
+  req("Edit the draft back, with a note", "PATCH", "/invoices/{{ciInvoiceId}}", {
+    body: { items: designItems, notes: "Thanks for your business." },
+    status: 200,
+    checks: [["₦200,000 again, note saved", 'j.amount_due_minor === 20000000 && j.notes === "Thanks for your business."']],
+  }),
+  req("Drafts list", "GET", "/invoices?status=draft", { status: 200, checks: [["includes it", 'j.data.some((x) => x.invoice_id === v("ciInvoiceId") && x.items.length === 2)']] }),
+  req("Cancel a draft", "POST", "/invoices/{{ciInvoiceId}}/cancel", { status: 409, checks: [["delete it instead", "/Delete it/.test(errorMessage)"]] }),
+  req("Remind about a draft", "POST", "/invoices/{{ciInvoiceId}}/remind", { status: 409 }),
+
+  // sending
+  req("Send it", "POST", "/invoices/{{ciInvoiceId}}/send", {
+    status: 200,
+    save: [["ciPayToken", 'j.pay_url.split("/pay/")[1]'], ["ciInvoiceNumber", "j.invoice_number"]],
+    checks: [
+      ["open, numbered, with a pay link", 'j.invoice_status === "open" && /^INV-\\d{4}$/.test(j.invoice_number) && /\\/pay\\/[A-Za-z0-9_-]{43}$/.test(j.pay_url) && Boolean(j.sent_at)'],
+      ["emailed to the client", 'j.emails.length === 1 && j.emails[0].kind === "invoice" && j.emails[0].to_address === "billing@techcorp.test" && j.emails[0].subject.includes(j.invoice_number)'],
+    ],
+  }),
+  waitForInvoice("The worker sends the email", "ciInvoiceId", {
+    until: 's.emails && s.emails[0] && s.emails[0].status !== "queued"',
+    checks: [["sent", 's.emails[0].status === "sent" && s.emails[0].attempts === 1']],
+  }),
+  req("Send it again", "POST", "/invoices/{{ciInvoiceId}}/send", { status: 409, checks: [["send a reminder instead", "/reminder/.test(errorMessage)"]] }),
+  req("Edit after sending", "PATCH", "/invoices/{{ciInvoiceId}}", { body: { notes: "x" }, status: 409 }),
+  req("Delete after sending", "DELETE", "/invoices/{{ciInvoiceId}}", { status: 409 }),
+  req("Remind straight away", "POST", "/invoices/{{ciInvoiceId}}/remind", { status: 429, checks: [["throttled", "/less than 60 minutes/.test(errorMessage)"]] }),
+  req("The client now has one invoice outstanding", "GET", "/clients/{{ciClientId}}", {
+    status: 200,
+    checks: [["1 invoice, ₦200,000 outstanding", 'j.invoice_count === 1 && j.outstanding.length === 1 && j.outstanding[0].amount_minor === 20000000 && Boolean(j.last_invoiced_at)']],
+  }),
+  clientInvoice("Send one at once, without emailing", { send: true, send_email: false, items: [{ description: "Retainer", quantity: 1, unit_amount_minor: 5000000 }] }, {
+    status: 201,
+    save: [["ciQuietInvoiceId", "j.invoice_id"], ["ciQuietToken", 'j.pay_url.split("/pay/")[1]']],
+    checks: [["open, numbered after the first, no email", 'j.invoice_status === "open" && j.invoice_number !== v("ciInvoiceNumber") && j.emails.length === 0']],
+  }),
+  req("Remind about it", "POST", "/invoices/{{ciQuietInvoiceId}}/remind", {
+    body: { message: "Just checking this reached you." },
+    status: 202,
+    checks: [["a reminder to the client", 'j.kind === "reminder" && j.to_address === "billing@techcorp.test" && j.status === "queued"']],
+  }),
+  req("Remind again within the hour", "POST", "/invoices/{{ciQuietInvoiceId}}/remind", { status: 429 }),
+  clientInvoice("An invoice for a client with no email", { client_id: "{{ciNoEmailClientId}}", send: true }, {
+    status: 201,
+    save: [["ciNoEmailInvoiceId", "j.invoice_id"], ["ciNoEmailToken", 'j.pay_url.split("/pay/")[1]']],
+    checks: [["sent, but nothing to email", 'j.invoice_status === "open" && j.emails.length === 0']],
+  }),
+  req("Remind a client with no email", "POST", "/invoices/{{ciNoEmailInvoiceId}}/remind", { status: 422, checks: [["share the link instead", "/share the pay link/.test(JSON.stringify(j))"]] }),
+  clientInvoice("A draft to throw away", {}, { status: 201, save: [["ciDraftToDelete", "j.invoice_id"]] }),
+  req("Delete the draft", "DELETE", "/invoices/{{ciDraftToDelete}}", { status: 200, checks: [["deleted", "j.deleted === true"]] }),
+  req("It's gone", "GET", "/invoices/{{ciDraftToDelete}}", { status: 404 }),
+
+  // the public pay page
+  payPage("Pay page: what the client sees", {
+    status: 200,
+    checks: [
+      ["who, what, how much", 'j.issuer_name === "Kemi Adeyemi" && j.billed_to === "TechCorp" && j.invoice_number === v("ciInvoiceNumber") && j.amount_due_minor === 20000000 && j.items.length === 2'],
+      ["payable by checkout or wallet", 'j.invoice_status === "open" && j.payment_methods.checkout === true && j.payment_methods.wallet === true'],
+      ["no account numbers, emails or ids", '!("issuer_account_number" in j) && !("invoice_id" in j) && !pm.response.text().includes("billing@techcorp.test") && !pm.response.text().includes(v("ciBusinessId"))'],
+    ],
+  }),
+  req("Pay page: malformed token", "GET", "/pay/not-a-token", { status: 404 }),
+  req("Pay page: unknown token", "GET", "/pay/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", { status: 404 }),
+  req("Checkout - bad email", "POST", "/pay/{{ciPayToken}}/checkout", { body: { email: "nope" }, status: 422 }),
+  req("Checkout - no email and none on file", "POST", "/pay/{{ciNoEmailToken}}/checkout", { body: {}, status: 422, checks: [["email flagged", "Boolean(j.error.details.email)"]] }),
+  checkout("Client starts a checkout", "ciPayToken", "ciCheckoutTxn"),
+  syncPay("Before paying: still pending", "ciPayToken", "ciCheckoutTxn", { checks: [["pending, invoice still open", 'j.status === "pending" && j.invoice_status === "open"']] }),
+  standIn("Stand-in: the client pays on the checkout page", "/_test/complete", { tx_ref: "{{ciCheckoutTxnRef}}", status: "successful" }, { save: [["ciFlwId", "String(j.id)"]] }),
+  syncPay("Back on the pay page: paid", "ciPayToken", "ciCheckoutTxn", {
+    checks: [["settled the invoice", 'j.status === "settled" && j.invoice_status === "paid" && j.settled_invoice === true']],
+  }),
+  syncPay("Sync again", "ciPayToken", "ciCheckoutTxn", { checks: [["no change", 'j.status === "settled" && j.invoice_status === "paid"']] }),
+  req("Webhook for the same payment", "POST", "/webhooks/payment-processor", {
+    headers: webhookHeaders,
+    body: { event: "charge.completed", data: { id: "{{ciFlwId}}", tx_ref: "{{ciCheckoutTxnRef}}", status: "successful" } },
+    status: 200,
+  }),
+  balanceIs("Kemi's business wallet has ₦200,000, once", "ciBusinessId", "20000000"),
+  waitForInvoice("Paid, with a receipt to the payer", "ciInvoiceId", {
+    until: 's.emails && s.emails.some((e) => e.kind === "receipt" && e.status !== "queued")',
+    description: "Polls (up to 20 seconds) until the worker has sent the receipt.",
+    checks: [
+      ["paid on the pay link", 's.invoice_status === "paid" && s.paid_via === "pay_link" && s.paid_by_email === "accounts@techcorp.test" && Boolean(s.settling_transaction_id)'],
+      ["receipt sent to the payer", 's.emails.some((e) => e.kind === "receipt" && e.to_address === "accounts@techcorp.test" && e.status === "sent")'],
+    ],
+  }),
+  req("Kemi gets an alert", "GET", "/notifications?limit=1", {
+    status: 200,
+    checks: [["Invoice paid, with number and client", 'j.data[0].kind === "money_received" && j.data[0].title === "Invoice paid: ₦200,000.00" && j.data[0].body.includes(v("ciInvoiceNumber")) && j.data[0].body.includes("TechCorp")']],
+  }),
+  payPage("Pay page now shows it paid", { status: 200, checks: [["paid, nothing to pay", 'j.invoice_status === "paid" && Boolean(j.paid_at) && j.payment_methods.checkout === false && j.payment_methods.wallet === false']] }),
+  checkout("Checkout on a paid invoice", "ciPayToken", "ignoredTxn", { status: 409, save: [], checks: [] }),
+  refundInvoice("Refund a pay-link payment to a wallet", "ciInvoiceId", { idem: "new", status: 409, checks: [["return it directly", "/pay link/.test(errorMessage)"]] }),
+
+  // failures
+  checkout("Checkout that the bank declines", "ciQuietToken", "ciDeclinedTxn"),
+  standIn("Stand-in: declined", "/_test/complete", { tx_ref: "{{ciDeclinedTxnRef}}", status: "failed" }),
+  syncPay("Declined: failed, invoice still open", "ciQuietToken", "ciDeclinedTxn", { checks: [["failed", 'j.status === "failed" && j.invoice_status === "open" && j.settled_invoice === false']] }),
+  checkout("Checkout with a tampered amount", "ciQuietToken", "ciTamperedTxn"),
+  standIn("Stand-in: paid ₦1 instead", "/_test/complete", { tx_ref: "{{ciTamperedTxnRef}}", status: "successful", amount: 1 }),
+  syncPay("Tampered: refused", "ciQuietToken", "ciTamperedTxn", { checks: [["failed on the amount", 'j.status === "failed" && /amount mismatch/.test(j.failure_reason) && j.invoice_status === "open"']] }),
+  syncPay("Sync another invoice's payment through this link", "ciNoEmailToken", "ciTamperedTxn", { status: 404 }),
+
+  // two people pay at once
+  checkout("Two people open checkout: first", "ciQuietToken", "ciFirstTxn"),
+  checkout("Two people open checkout: second", "ciQuietToken", "ciSecondTxn"),
+  standIn("Stand-in: first pays", "/_test/complete", { tx_ref: "{{ciFirstTxnRef}}", status: "successful" }),
+  standIn("Stand-in: second pays too", "/_test/complete", { tx_ref: "{{ciSecondTxnRef}}", status: "successful" }),
+  syncPay("First settles the invoice", "ciQuietToken", "ciFirstTxn", { checks: [["paid by the first", 'j.status === "settled" && j.invoice_status === "paid" && j.settled_invoice === true']] }),
+  syncPay("Second is credited, not lost", "ciQuietToken", "ciSecondTxn", { checks: [["settled, but didn't settle the invoice", 'j.status === "settled" && j.settled_invoice === false']] }),
+  balanceIs("Both arrived (₦200,000 + 2 × ₦50,000)", "ciBusinessId", "30000000"),
+  req("Kemi is told to return the extra", "GET", "/notifications?limit=5", {
+    status: 200,
+    checks: [["extra payment alert", 'j.data.some((n) => n.kind === "invoice_extra_payment" && n.title.startsWith("Extra payment of ₦50,000.00"))']],
+  }),
+
+  // cancelling stops the link
+  req("Cancel the no-email invoice", "POST", "/invoices/{{ciNoEmailInvoiceId}}/cancel", { status: 200, checks: [["cancelled", 'j.invoice_status === "cancelled"']] }),
+  req("Its pay page says cancelled", "GET", "/pay/{{ciNoEmailToken}}", { status: 200, checks: [["cancelled, not payable", 'j.invoice_status === "cancelled" && j.payment_methods.checkout === false']] }),
+  checkout("Checkout on a cancelled invoice", "ciNoEmailToken", "ignoredTxn", { status: 409, save: [], checks: [] }),
+
+  // a VergePay customer pays from their wallet through the link
+  clientInvoice("One more for TechCorp", { send: true, send_email: false, items: [{ description: "Hosting", quantity: 3, unit_amount_minor: 1000000 }] }, {
+    status: 201,
+    save: [["ciWalletInvoiceId", "j.invoice_id"], ["ciWalletToken", 'j.pay_url.split("/pay/")[1]']],
+  }),
+  req("Kemi can't pay her own invoice from her wallet", "POST", "/pay/{{ciWalletToken}}/wallet", {
+    idem: "new",
+    body: { source_account_id: "{{ciPersonalId}}" },
+    status: 422,
+    checks: [["own invoice", "/your own invoice/.test(JSON.stringify(j))"]],
+  }),
+  ...newUser("linkpayer", "a VergePay customer paying the link (Femi)"),
+  req("Femi can't see Kemi's client", "GET", "/clients/{{ciClientId}}", { status: 404 }),
+  req("Femi adds a client of his own", "POST", "/clients", { body: { name: "Mine" }, status: 201, save: [["femiClientId", "j.client_id"]] }),
+  req("Femi can't see Kemi's invoice yet", "GET", "/invoices/{{ciWalletInvoiceId}}", { status: 404 }),
+  req("Pay from wallet before verifying", "POST", "/pay/{{ciWalletToken}}/wallet", { idem: "new", body: { source_account_id: "00000000-0000-4000-8000-000000000000" }, status: 403, checks: [["KYC", 'errorCode === "KYC_REQUIRED"']] }),
+  kycVerify(),
+  openAccount("Femi: personal wallet", "femiAccountId"),
+  req("Dev: fund Femi with ₦100,000", "POST", "/dev/accounts/{{femiAccountId}}/fund", { idem: "new", body: { amount_minor: 10000000 }, status: 201 }),
+  req("Pay from wallet - missing key", "POST", "/pay/{{ciWalletToken}}/wallet", { body: { source_account_id: "{{femiAccountId}}" }, status: 400 }),
+  req("Femi pays from his wallet", "POST", "/pay/{{ciWalletToken}}/wallet", {
+    idem: "new:femiPayKey",
+    body: { source_account_id: "{{femiAccountId}}" },
+    status: 200,
+    save: [["femiPaymentId", "j.settling_transaction_id"]],
+    checks: [["paid", 'j.invoice_status === "paid" && typeof j.settling_transaction_id === "string"']],
+  }),
+  req("Replay the wallet payment", "POST", "/pay/{{ciWalletToken}}/wallet", {
+    idem: "same:femiPayKey",
+    body: { source_account_id: "{{femiAccountId}}" },
+    status: 200,
+    checks: [["same payment, charged once", 'replayed && j.settling_transaction_id === v("femiPaymentId")']],
+  }),
+  balanceIs("Femi charged ₦30,000 once", "femiAccountId", "7000000"),
+  req("Femi now sees it as received", "GET", "/invoices/{{ciWalletInvoiceId}}", {
+    status: 200,
+    checks: [["received, paid from his wallet, no client contact details", 'j.direction === "received" && j.invoice_status === "paid" && j.paid_via === "wallet" && j.account_id === v("femiAccountId") && !("email" in j.client)']],
+  }),
+  req("Femi can't refund it", "POST", "/invoices/{{ciWalletInvoiceId}}/refund", { idem: "new", status: 403 }),
+
+  signInAs("freelancer", "the freelancer (Kemi)"),
+  balanceIs("Kemi received it (₦330,000 in all)", "ciBusinessId", "33000000"),
+  refundInvoice("Kemi refunds the wallet payment", "ciWalletInvoiceId", { idem: "new", body: { reason: "Paid twice by mistake" }, status: 200, checks: [["refunded", 'j.invoice_status === "refunded"']] }),
+  balanceIs("Back to ₦300,000", "ciBusinessId", "30000000"),
+  clientInvoice("Invoice someone else's client", { client_id: "{{femiClientId}}" }, { status: 422, checks: [["client not found", "Boolean(j.error.details.client_id)"]] }),
+
+  // archiving
+  req("Archive Bloom Bakery", "DELETE", "/clients/{{ciNoEmailClientId}}", { status: 200, checks: [["archived", "Boolean(j.archived_at)"]] }),
+  req("Hidden from the list", "GET", "/clients", { status: 200, checks: [["only TechCorp", 'j.data.length === 1 && j.data[0].client_id === v("ciClientId")']] }),
+  req("Still there with archived ones", "GET", "/clients?include_archived=true", { status: 200, checks: [["both", "j.data.length === 2"]] }),
+  clientInvoice("Invoice an archived client", { client_id: "{{ciNoEmailClientId}}" }, { status: 422, checks: [["archived", "/archived/.test(JSON.stringify(j))"]] }),
+  req("Filter invoices by client", "GET", "/invoices?client_id={{ciClientId}}&limit=100", {
+    status: 200,
+    checks: [["only TechCorp's", 'j.data.length === 3 && j.data.every((x) => x.client.client_id === v("ciClientId"))']],
+  }),
+  invariants(),
+];
+
+// ---------------------------------------------------------------------------
 // 9. Wrap-up
 
 const wrapUp = [
@@ -2037,7 +2314,8 @@ const main = collection(
     folder("9. Cards, webhook and bank transfers", "Card linking through hosted checkout, the signed webhook (v3 and v4), saved-card charges (pending, instant, 3-D Secure, declined, tampered, failed), spending controls, block/unblock/remove, and bank-transfer funding. A fresh card holder, against the Flutterwave stand-in.", cards),
     folder("10. Investments", "Connecting an Alpaca brokerage account with OAuth (approve, deny, replayed, forged and expired states, reconnect), background syncs by the BullMQ worker (retries with backoff, giving up, the scheduler, a revoked token), the synced holdings, and disconnecting. A fresh investor, against the Alpaca stand-in; needs the worker running.", investments),
     folder("11. Notifications", "Debit and credit alerts written with the money: a top-up, a transfer (both sides, named, with the note), an idempotent replay that alerts nobody twice, a move between own wallets, paging, read and read-all, and someone else's alert. Two fresh customers. Live delivery over the WebSocket: npm run test:realtime.", notifications),
-    folder("12. Wrap-up","The 2FA brute-force limit, resetting the test users, and logout.", wrapUp),
+    folder("12. Invoicing clients and pay links", "The client book, draft invoices with line items (rounding to the kobo), sending with a number, pay link and email (sent by the worker), reminders and their throttle, the public pay page (what it hides), Flutterwave checkout through the stand-in (paid, declined, tampered, two payers at once, the webhook), cancelling, a VergePay customer paying the link from their wallet, refunds, archiving, and other users' clients. Two fresh customers; needs the worker running.", clientInvoicing),
+    folder("13. Wrap-up", "The 2FA brute-force limit, resetting the test users, and logout.", wrapUp),
   ],
 );
 

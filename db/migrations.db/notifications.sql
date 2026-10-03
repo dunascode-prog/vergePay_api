@@ -7,7 +7,8 @@ CREATE TABLE IF NOT EXISTS notifications (
 
     user_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
 
-    -- money_received, money_sent, own_transfer, kyc_approved, kyc_rejected
+    -- money_received, money_sent, own_transfer, kyc_approved, kyc_rejected,
+    -- invoice_extra_payment
     kind VARCHAR(40) NOT NULL,
 
     title VARCHAR(160) NOT NULL,

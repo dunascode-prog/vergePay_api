@@ -54,7 +54,28 @@ export async function cancelLinkSync(linkId) {
   if (job && ["waiting", "delayed", "prioritized"].includes(await job.getState())) await job.remove();
 }
 
+// Outgoing email (services/email.js). One job per saved email; a mail
+// server that's down is retried with exponential backoff (about 15 minutes
+// in all) before the email is marked failed.
+export const EMAIL_QUEUE = "email";
+export const EMAIL_ATTEMPTS = 6;
+
+let mailQueue;
+export function emailQueue() {
+  mailQueue ??= new Queue(EMAIL_QUEUE, {
+    connection: redisConnection(),
+    defaultJobOptions: {
+      attempts: EMAIL_ATTEMPTS,
+      backoff: { type: "exponential", delay: 15_000 },
+      removeOnComplete: true,
+      removeOnFail: true,
+    },
+  });
+  return mailQueue;
+}
+
 export async function closeQueue() {
-  await queue?.close();
+  await Promise.all([queue?.close(), mailQueue?.close()]);
   queue = undefined;
+  mailQueue = undefined;
 }

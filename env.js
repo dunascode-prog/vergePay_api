@@ -51,6 +51,19 @@ const env = {
     model: process.env.OLLAMA_MODEL || "claude-sonnet-4-6",
   },
   corsOrigin: process.env.CORS_ORIGIN || "http://localhost:3000",
+  // The web app's public address, for links in emails and on invoices
+  // (pay links: <APP_URL>/pay/<token>). Defaults to CORS_ORIGIN.
+  appUrl: (process.env.APP_URL || process.env.CORS_ORIGIN || "http://localhost:3000").replace(/\/$/, ""),
+  // Outgoing email (services/email.js). Any SMTP service works, e.g. Brevo's
+  // free plan: SMTP_URL=smtp://<login>:<smtp key>@smtp-relay.brevo.com:587
+  // Without SMTP_URL, development uses Ethereal (fake inboxes with a preview
+  // link per message) and production marks emails failed.
+  // EMAIL_TRANSPORT=json builds messages without sending them (tests).
+  email: {
+    smtpUrl: process.env.SMTP_URL,
+    from: process.env.EMAIL_FROM || "VergePay <no-reply@vergepay.dev>",
+    transport: process.env.EMAIL_TRANSPORT || (process.env.SMTP_URL ? "smtp" : "ethereal"),
+  },
   // Web app origins allowed to open the live-updates WebSocket
   // (realtime/websocketServer.js), comma-separated. Defaults to CORS_ORIGIN.
   wsAllowedOrigins: (process.env.WS_ALLOWED_ORIGINS || process.env.CORS_ORIGIN || "http://localhost:3000")
