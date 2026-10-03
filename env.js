@@ -51,6 +51,12 @@ const env = {
     model: process.env.OLLAMA_MODEL || "claude-sonnet-4-6",
   },
   corsOrigin: process.env.CORS_ORIGIN || "http://localhost:3000",
+  // Web app origins allowed to open the live-updates WebSocket
+  // (realtime/websocketServer.js), comma-separated. Defaults to CORS_ORIGIN.
+  wsAllowedOrigins: (process.env.WS_ALLOWED_ORIGINS || process.env.CORS_ORIGIN || "http://localhost:3000")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean),
   // 64 hex characters; encrypts third-party tokens in the vault (services/vault.js)
   vaultEncryptionKey: process.env.VAULT_ENCRYPTION_KEY,
   // Redis for the BullMQ job queue (services/queue.js), e.g. a Redis Cloud

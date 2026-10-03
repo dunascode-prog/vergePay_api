@@ -28,6 +28,7 @@ const files = [
   "migrations.db/ledger_entries.sql",
   "migrations.db/processor.sql",
   "migrations.db/invoice.sql",
+  "migrations.db/notifications.sql",
 ];
 
 const pool = new pg.Pool({
