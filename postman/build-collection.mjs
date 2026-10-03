@@ -1799,6 +1799,117 @@ const investments = [
 ];
 
 // ---------------------------------------------------------------------------
+// Notifications: debit/credit alerts written with the money itself. Live
+// delivery over the WebSocket is checked by postman/realtime-check.mjs
+// (Newman can't open sockets).
+
+const newestAlert = (name, checks, save = []) => req(name, "GET", "/notifications?limit=1", { status: 200, checks, save });
+
+const notifications = [
+  ...newUser("payee", "the payee"),
+  req("Payee: set a name", "PATCH", "/users/me", { body: { first_name: "Bola", last_name: "Payee" }, status: 200 }),
+  kycVerify(),
+  openAccount("Payee: personal wallet", "payeeAccountId", { saveNumber: "payeeAccountNumber" }),
+  req("A new customer has no alerts", "GET", "/notifications", {
+    status: 200,
+    checks: [["empty, nothing unread", "j.data.length === 0 && j.unread_count === 0 && j.has_more === false && j.next_cursor === null"]],
+  }),
+
+  ...newUser("payer", "the payer"),
+  req("Payer: set a name", "PATCH", "/users/me", { body: { first_name: "Ada", last_name: "Payer" }, status: 200 }),
+  kycVerify(),
+  openAccount("Payer: personal wallet", "payerAccountId"),
+  openAccount("Payer: business wallet", "payerBusinessId", { purpose: "business" }),
+  req("Dev: fund the payer with ₦5,000", "POST", "/dev/accounts/{{payerAccountId}}/fund", { idem: "new", body: { amount_minor: 500000 }, status: 201 }),
+  newestAlert("The top-up is a credit alert", [
+    ["money_received credit of 500000", 'j.data[0].kind === "money_received" && j.data[0].direction === "credit" && j.data[0].amount_minor === 500000 && j.data[0].currency_code === "NGN"'],
+    ["worded with the amount and wallet", 'j.data[0].title === "₦5,000.00 added to your Personal wallet"'],
+    ["unread", "j.data[0].read_at === null && j.unread_count === 1"],
+  ]),
+  req("Send ₦1,500 to the payee", "POST", "/transactions", {
+    idem: "new:alertTransferKey",
+    body: { sender_account_id: "{{payerAccountId}}", receiver_account_number: "{{payeeAccountNumber}}", amount_minor: 150000, currency_code: "NGN", description: "Logo design" },
+    status: 201,
+    save: [["alertTransferId", "j.transaction_id"]],
+  }),
+  newestAlert(
+    "The sender gets a debit alert",
+    [
+      ["money_sent debit for this transfer", 'j.data[0].kind === "money_sent" && j.data[0].direction === "debit" && j.data[0].transaction_id === v("alertTransferId") && j.data[0].account_id === v("payerAccountId")'],
+      ["names the receiver", 'j.data[0].title === "You sent ₦1,500.00 to Bola Payee"'],
+      ["carries the note", 'j.data[0].body === "From your Personal wallet · Logo design"'],
+    ],
+    [["payerAlertId", "j.data[0].notification_id"]],
+  ),
+  req("Replay the same transfer (same key)", "POST", "/transactions", {
+    idem: "same:alertTransferKey",
+    body: { sender_account_id: "{{payerAccountId}}", receiver_account_number: "{{payeeAccountNumber}}", amount_minor: 150000, currency_code: "NGN", description: "Logo design" },
+    status: 201,
+    checks: [["replayed", 'pm.response.headers.get("Idempotent-Replayed") === "true"']],
+  }),
+  req("A replay alerts nobody twice", "GET", "/notifications", {
+    status: 200,
+    checks: [["still two alerts", "j.data.length === 2 && j.unread_count === 2"]],
+  }),
+  req("Move ₦200 to own business wallet", "POST", "/transactions", {
+    idem: "new",
+    body: { sender_account_id: "{{payerAccountId}}", receiver_account_id: "{{payerBusinessId}}", amount_minor: 20000, currency_code: "NGN" },
+    status: 201,
+  }),
+  newestAlert("Moving between own wallets is one alert", [
+    ["own_transfer, no direction", 'j.data[0].kind === "own_transfer" && j.data[0].direction === null && j.data[0].account_id === v("payerBusinessId")'],
+    ["worded as a move", 'j.data[0].title === "You moved ₦200.00 to your Business wallet" && j.data[0].body === "From your Personal wallet"'],
+    ["three unread", "j.unread_count === 3"],
+  ]),
+  req("Page 1 of 2", "GET", "/notifications?limit=2", {
+    status: 200,
+    checks: [["two, newest first, more to come", 'j.data.length === 2 && j.has_more === true && typeof j.next_cursor === "string" && j.data[0].kind === "own_transfer"']],
+    save: [["alertCursor", "j.next_cursor"]],
+  }),
+  req("Page 2 of 2", "GET", "/notifications?limit=2&after={{alertCursor}}", {
+    status: 200,
+    checks: [["the oldest, the top-up", 'j.data.length === 1 && j.has_more === false && j.data[0].title.startsWith("₦5,000.00 added")']],
+  }),
+  req("Bad cursor", "GET", "/notifications?after=nonsense", { status: 400 }),
+  req("Bad limit", "GET", "/notifications?limit=0", { status: 422 }),
+  req("Bad unread filter", "GET", "/notifications?unread=maybe", { status: 422 }),
+  req("Unknown query field", "GET", "/notifications?kind=money_sent", { status: 422 }),
+
+  signInAs("payee", "the payee"),
+  newestAlert(
+    "The receiver gets a credit alert",
+    [
+      ["money_received credit for this transfer", 'j.data[0].kind === "money_received" && j.data[0].direction === "credit" && j.data[0].transaction_id === v("alertTransferId") && j.data[0].account_id === v("payeeAccountId")'],
+      ["names the sender", 'j.data[0].title === "Ada Payer sent you ₦1,500.00"'],
+      ["says where it went, with the note", 'j.data[0].body === "Into your Personal wallet · Logo design"'],
+      ["one unread", "j.unread_count === 1"],
+    ],
+    [["payeeAlertId", "j.data[0].notification_id"]],
+  ),
+  req("Can't read someone else's alert", "POST", "/notifications/{{payerAlertId}}/read", { status: 404 }),
+  req("Mark read: not an id", "POST", "/notifications/not-a-uuid/read", { status: 404 }),
+  req("Mark it read", "POST", "/notifications/{{payeeAlertId}}/read", {
+    status: 200,
+    checks: [["read, nothing unread", 'typeof j.read_at === "string" && j.unread_count === 0']],
+    save: [["payeeReadAt", "j.read_at"]],
+  }),
+  req("Mark it read again", "POST", "/notifications/{{payeeAlertId}}/read", {
+    status: 200,
+    checks: [["read time unchanged", 'j.read_at === v("payeeReadAt")']],
+  }),
+  req("Unread only: none", "GET", "/notifications?unread=true", { status: 200, checks: [["empty", "j.data.length === 0 && j.unread_count === 0"]] }),
+
+  signInAs("payer", "the payer"),
+  req("Unread only: three", "GET", "/notifications?unread=true", { status: 200, checks: [["three", "j.data.length === 3"]] }),
+  req("Mark all read", "POST", "/notifications/read-all", { status: 200, checks: [["three marked", "j.updated === 3 && j.unread_count === 0"]] }),
+  req("Mark all read again", "POST", "/notifications/read-all", { status: 200, checks: [["nothing left", "j.updated === 0"]] }),
+  req("Everything is read", "GET", "/notifications", {
+    status: 200,
+    checks: [["all read", "j.data.length === 3 && j.data.every((n) => n.read_at !== null) && j.unread_count === 0"]],
+  }),
+];
+
+// ---------------------------------------------------------------------------
 // 9. Wrap-up
 
 const wrapUp = [
@@ -1925,7 +2036,8 @@ const main = collection(
     folder("8. Two-factor authentication", "TOTP setup, the sign-in challenge, one-time codes and the recent-confirmation rule. As Ada. Codes are computed in Postman.", twoFactor),
     folder("9. Cards, webhook and bank transfers", "Card linking through hosted checkout, the signed webhook (v3 and v4), saved-card charges (pending, instant, 3-D Secure, declined, tampered, failed), spending controls, block/unblock/remove, and bank-transfer funding. A fresh card holder, against the Flutterwave stand-in.", cards),
     folder("10. Investments", "Connecting an Alpaca brokerage account with OAuth (approve, deny, replayed, forged and expired states, reconnect), background syncs by the BullMQ worker (retries with backoff, giving up, the scheduler, a revoked token), the synced holdings, and disconnecting. A fresh investor, against the Alpaca stand-in; needs the worker running.", investments),
-    folder("11. Wrap-up", "The 2FA brute-force limit, resetting the test users, and logout.", wrapUp),
+    folder("11. Notifications", "Debit and credit alerts written with the money: a top-up, a transfer (both sides, named, with the note), an idempotent replay that alerts nobody twice, a move between own wallets, paging, read and read-all, and someone else's alert. Two fresh customers. Live delivery over the WebSocket: npm run test:realtime.", notifications),
+    folder("12. Wrap-up","The 2FA brute-force limit, resetting the test users, and logout.", wrapUp),
   ],
 );
 

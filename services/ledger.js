@@ -2,6 +2,7 @@ import { pool } from "../db/connectDB.js";
 import { withTransaction } from "../db/withTransaction.js";
 import { ConflictError, InsufficientFundsError, ValidationError } from "../utils/errorStr.js";
 import { IdempotencyConflictError } from "../utils/idempotency.js";
+import { recordMoneyNotifications } from "./notifications.js";
 
 // The ledger-posting routine (data model 7.1). Every movement of money, be it
 // a transfer, a top-up, a reversal, a loan payment or a card payment, goes
@@ -15,6 +16,7 @@ import { IdempotencyConflictError } from "../utils/idempotency.js";
 //   4. insert one DEBIT and one CREDIT ledger entry with running balances
 //   5. update both cached balances
 //   6. mark the transaction settled
+//   7. write the debit/credit alerts (services/notifications.js)
 //
 // The row locks mean a concurrent posting against either account waits for
 // this one, then re-reads the updated balance, so money can't be spent twice.
@@ -220,6 +222,9 @@ async function writeEntriesAndSettle(client, txn, sender, receiver) {
      RETURNING ${TRANSACTION_COLUMNS}`,
     [transactionId],
   );
+
+  // debit/credit alerts, in this same DB transaction; pushed live after commit
+  await recordMoneyNotifications(client, settled.rows[0]);
 
   return { ...settled.rows[0], ledger_entries: entries.rows };
 }
