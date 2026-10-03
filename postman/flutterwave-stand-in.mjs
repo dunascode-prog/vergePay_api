@@ -170,7 +170,8 @@ http
           response_code: "02",
           flw_ref: `FLW-${Date.now()}`,
           order_ref: `URF_${Date.now()}`,
-          account_number: `99${String(Math.floor(Math.random() * 1e8)).padStart(8, "0")}`,
+          // like the real test mode: every customer gets the same number
+          account_number: "0067100155",
           bank_name: "Stand-in MFB",
           expiry_date: "N/A",
           amount: "0.00",

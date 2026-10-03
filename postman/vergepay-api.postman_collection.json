@@ -18381,6 +18381,58 @@
           }
         },
         {
+          "name": "Another wallet, same number from the processor",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "pm.test(\"its own record\", () => pm.expect(j.account_number === v(\"virtualAccountNumber\") && Boolean(j.virtual_account_id), \"its own record\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/accounts/{{cardAccount2Id}}/virtual-account",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "accounts",
+                "{{cardAccount2Id}}",
+                "virtual-account"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"bvn\": \"22222223883\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Flutterwave's test mode gives everyone the same number. Each wallet still gets its own record (deposits map by reference), not an empty reply.\n\n**Expect:** 201\n\n**Checks:**\n- its own record"
+          }
+        },
+        {
           "name": "Stand-in: someone transfers ₦2,500.50 into it",
           "event": [
             {

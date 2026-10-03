@@ -19,7 +19,9 @@ CREATE TABLE IF NOT EXISTS virtual_accounts (
 
     processor VARCHAR(20) NOT NULL DEFAULT 'flutterwave',
 
-    account_number VARCHAR(20) NOT NULL UNIQUE,
+    -- not unique: deposits map back by processor_tx_ref, and Flutterwave's
+    -- test mode hands every customer the same number
+    account_number VARCHAR(20) NOT NULL,
 
     bank_name VARCHAR(100) NOT NULL,
 
@@ -30,6 +32,8 @@ CREATE TABLE IF NOT EXISTS virtual_accounts (
 
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+ALTER TABLE virtual_accounts DROP CONSTRAINT IF EXISTS virtual_accounts_account_number_key;
+CREATE INDEX IF NOT EXISTS idx_virtual_accounts_number ON virtual_accounts(account_number);
 
 -- Every webhook delivery, deduplicated on the processor's event identity
 -- (API doc 10.1): providers retry, so the same event can arrive many times.
