@@ -228,7 +228,7 @@ The full designs are in [`documentation/`](documentation/): the API design (`Fin
 | GET | `/v1/invoices/:id` | Visible to the issuer and the billed user only; the issuer also sees every email sent about it |
 | PATCH / DELETE | `/v1/invoices/:id` | Drafts only |
 | POST | `/v1/invoices/:id/send` | Draft → open: number (`INV-0001`, per issuer), pay link, email to the client |
-| POST | `/v1/invoices/:id/remind` | Emails the client again, at most once an hour |
+| POST | `/v1/invoices/:id/remind` | Emails the client again, at most once an hour. Every invoice reports `reminders_sent` and `last_reminder_at`, so analytics can tell whether reminders work |
 | POST | `/v1/invoices/:id/pay` | The billed VergePay user pays from a wallet; a real transaction settles it |
 | POST | `/v1/invoices/:id/cancel` | Issuer or back office; the pay link stops working. Cancelling a paid invoice is a `409` |
 | POST | `/v1/invoices/:id/refund` | Full refund of a wallet payment, exactly once |
@@ -301,7 +301,7 @@ The whole API is exercised by a Postman suite, [`postman/vergepay-api.postman_co
 - **Provider behaviour on demand:** local stand-ins for Flutterwave and Alpaca ([`postman/flutterwave-stand-in.mjs`](postman/flutterwave-stand-in.mjs), [`postman/alpaca-stand-in.mjs`](postman/alpaca-stand-in.mjs)) produce declines, 3-D Secure, tampered amounts, bank deposits, rate limits, outages and revoked tokens.
 - **The background worker:** each brokerage sync is watched until it finishes, including retries with backoff, giving up after 5 attempts, and the scheduler.
 - **Ledger invariants** checked across the database after each money-moving folder.
-- **Invoicing clients:** drafts and their rounding, sending and email (built but not sent: `EMAIL_TRANSPORT=json`), the reminder throttle, what the public pay page hides, checkout paid, declined, tampered and paid twice at once, the webhook, cancelling, and paying a link from a wallet.
+- **Invoicing clients:** drafts and their rounding, sending and email (built but not sent: `EMAIL_TRANSPORT=json`), the reminder throttle and reminder counts, an invoice made overdue (dev backdate), what the public pay page hides, checkout paid, declined, tampered and paid twice at once, the webhook, cancelling, and paying a link from a wallet.
 - **Live updates:** Newman can't open sockets, so [`postman/realtime-check.mjs`](postman/realtime-check.mjs) (`npm run test:realtime`) connects real WebSockets for two customers and checks 17 things: who may connect, alerts and balance events arriving live on both sides and in a second tab, a rolled-back transfer sending nothing, one customer never seeing another's events, and refusal after sign-out.
 
 Every request's expected status and checks are listed in **[`postman/EXPECTED_RESULTS.md`](postman/EXPECTED_RESULTS.md)**, generated from the same source as the collection. A second collection runs the real Flutterwave sandbox end to end.

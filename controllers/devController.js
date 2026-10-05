@@ -177,11 +177,11 @@ export async function backdateInvoice(req, res) {
   const { invoiceId } = req.params;
   if (!isUuid(invoiceId)) throw new NotFoundError({ message: "Invoice not found." });
   const result = await pool.query(
+    // the issuer, or the billed VergePay user (an invoice to a client has none)
     `UPDATE invoices i SET due_date = CURRENT_DATE - $3::int
-     FROM account ia, account ba
      WHERE i.invoice_id = $1
-       AND ia.account_id = i.issuer_account_id AND ba.account_id = i.account_id
-       AND $2 IN (ia.user_id, ba.user_id)
+       AND ($2 = i.issuer_user_id
+            OR $2 IN (SELECT ba.user_id FROM account ba WHERE ba.account_id = i.account_id))
      RETURNING to_char(i.due_date, 'YYYY-MM-DD') AS due_date`,
     [invoiceId, req.user.sub, validation.data.days],
   );
