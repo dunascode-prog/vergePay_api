@@ -345,6 +345,7 @@ cd vergePay_api
 npm install
 cp .env.example .env    # or create .env with the variables below
 npm run db:init         # applies every migration and seed; safe to re-run
+npm run seed:demo       # optional, with the API running: demo money, invoices and recurring plans for tolu_login
 npm run start-dev       # the API on http://localhost:8000
 npm run worker          # the background worker (brokerage syncs, email, recurring billing), in another terminal
 ```

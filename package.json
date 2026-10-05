@@ -8,6 +8,7 @@
     "start-dev": "nodemon server.js",
     "worker": "node worker.js",
     "db:init": "node db/initDB.js",
+    "seed:demo": "node db/seeds.db/demo-tolu.mjs",
     "postman:build": "node postman/build-collection.mjs",
     "flw:stand-in": "node postman/flutterwave-stand-in.mjs",
     "alpaca:stand-in": "node postman/alpaca-stand-in.mjs",
