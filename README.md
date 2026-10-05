@@ -17,13 +17,13 @@ Built by **[Seyitan Omodara](https://github.com/dunascode-prog)** · Frontend: [
 | | |
 |---|---|
 | **What it is** | A REST API for money: open accounts, move money, lend, invoice clients (who pay through a link), bill them on a schedule, and fund accounts by card or bank transfer |
-| **Endpoints** | 79, across auth, accounts, transactions, loans, invoices, clients, recurring billing, public pay links, cards, investments, notifications, webhooks and back office, plus a live WebSocket |
+| **Endpoints** | 80, across auth, accounts, transactions, loans, invoices, clients, recurring billing, public pay links, cards, investments, notifications, webhooks and back office, plus a live WebSocket |
 | **Live updates** | Debit/credit alerts written in the same DB transaction as the money, pushed over a WebSocket after commit, fanned out across processes with Redis pub/sub |
 | **Money model** | Double-entry ledger in integer minor units (kobo). Balances are cached, but the ledger is the truth |
 | **Payments** | Flutterwave v3 hosted checkout, card tokenization, 3-D Secure and permanent virtual accounts, verified on the real sandbox |
 | **Investments** | Alpaca brokerage connected with OAuth 2.0; holdings synced by a BullMQ worker on Redis, with retries, backoff and a schedule |
 | **Security** | TOTP 2FA built from the RFC, HttpOnly cookie sessions with one-time refresh tokens, encrypted secrets, PCI-safe card handling |
-| **Testing** | 684-request Postman suite with **1,140 assertions**, including concurrency races, forged-webhook and OAuth attacks, and background-job retries, plus an end-to-end WebSocket check, all passing |
+| **Testing** | 686-request Postman suite with **1,144 assertions**, including concurrency races, forged-webhook and OAuth attacks, and background-job retries, plus an end-to-end WebSocket check, all passing |
 
 ---
 
@@ -218,7 +218,7 @@ The full designs are in [`documentation/`](documentation/): the API design (`Fin
 
 | Method | Endpoint | |
 |---|---|---|
-| POST / GET | `/v1/loans/applications` · `/:id` | Apply (202 for review) and track the application |
+| POST / GET | `/v1/loans/applications` · `/:id` | Apply (202 for review), list your applications (newest first) and track one |
 | POST | `/v1/loans/applications/:id/approve` · `/reject` | Back office: set the rate, or reject with a reason |
 | POST | `/v1/loans/:id/disburse` | Back office: pay out through the ledger and generate the schedule |
 | GET | `/v1/loans` · `/:id` · `/:id/schedule` | Balance owed, next installment, and the principal/interest split |
@@ -308,7 +308,7 @@ An alert is written for every settled movement on a customer's wallet: a credit 
 
 ## Testing
 
-The whole API is exercised by a Postman suite, [`postman/vergepay-api.postman_collection.json`](postman/vergepay-api.postman_collection.json): **684 requests and 1,140 assertions**, grouped into 15 folders from sign-up to brokerage disconnection. It isn't just happy paths:
+The whole API is exercised by a Postman suite, [`postman/vergepay-api.postman_collection.json`](postman/vergepay-api.postman_collection.json): **686 requests and 1,144 assertions**, grouped into 15 folders from sign-up to brokerage disconnection. It isn't just happy paths:
 
 - **Every edge case:** validation, wrong owner, wrong state (`409`), insufficient funds, replayed keys, and retries after a simulated crash.
 - **Races:** simultaneous payments, refunds, repayments and sign-ins, fired at the same instant from test scripts.
@@ -376,7 +376,7 @@ npm run worker          # the background worker (brokerage syncs, email, recurri
 | `ALPACA_REDIRECT_URI` | Must match the app's redirect URI, e.g. `http://localhost:8000/v1/brokerage-links/oauth/callback` |
 | `ALPACA_SHARED_ACCOUNT`, `ALPACA_PAPER_KEY_ID`, `ALPACA_PAPER_SECRET` | Testing only (off in production): link every user to one shared paper account with its API keys, skipping OAuth, e.g. while the OAuth app awaits Alpaca's approval |
 
-Card and bank-transfer endpoints answer `503` until the Flutterwave keys are set, and investments until the Alpaca keys and Redis are set; everything else works without them. Development-only helpers (`/v1/dev/*`, for test top-ups and suite resets) are never mounted when `NODE_ENV=production`.
+Card and bank-transfer endpoints answer `503` until the Flutterwave keys are set, and investments until the Alpaca keys and Redis are set; everything else works without them. Development-only helpers (`/v1/dev/*`, for test top-ups, suite resets, and deciding your own loan application or backdating its installments so the app's loan screens can be tried without the back-office key) are never mounted when `NODE_ENV=production`.
 
 ---
 

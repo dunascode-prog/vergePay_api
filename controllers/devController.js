@@ -12,6 +12,7 @@ import { endSession, issueSession } from "../utils/session.js";
 import { brokerageQueue } from "../services/queue.js";
 import { billDuePlans } from "../services/recurring.js";
 import { isUuid, validationDetails } from "../utils/validation.js";
+import { approveApplication, disburseApprovedLoan, rejectApplication } from "./loanController.js";
 
 // ₦10,000,000 (in kobo) per top-up keeps test balances in a sane range.
 const MAX_TOP_UP_MINOR = 1_000_000_000;
@@ -323,4 +324,60 @@ export async function checkInvariants(req, res) {
     ok: Object.values(checks).every((value) => Number(value) === 0),
     checks,
   });
+}
+
+// POST /v1/dev/loans/applications/:applicationId/decide
+//   { decision: "approve", interest_rate_bps?, approved_amount_minor?, term_months? }
+//   { decision: "reject", reason }
+// Decides one of the caller's own applications, standing in for the
+// underwriter: an approval is paid out at once, as the back office would
+// (POST /approve then /disburse). Either way it runs the same code.
+const decideSchema = z.discriminatedUnion("decision", [
+  z.strictObject({
+    decision: z.literal("approve"),
+    interest_rate_bps: z.number().int().min(0).max(10_000).default(2400),
+    approved_amount_minor: z.number().int().positive().optional(),
+    term_months: z.number().int().min(1).max(360).optional(),
+  }),
+  z.strictObject({ decision: z.literal("reject"), reason: z.string().trim().min(1).max(255) }),
+]);
+
+export async function decideOwnLoanApplication(req, res) {
+  const validation = decideSchema.safeParse(req.body ?? {});
+  if (!validation.success) {
+    throw new ValidationError({ details: validationDetails(validation.error) });
+  }
+  const { applicationId } = req.params;
+  const owned = isUuid(applicationId)
+    ? await pool.query(`SELECT 1 FROM loan_applications WHERE application_id = $1 AND user_id = $2`, [applicationId, req.user.sub])
+    : { rowCount: 0 };
+  if (owned.rowCount === 0) throw new NotFoundError({ message: "Loan application not found." });
+
+  const { decision, ...terms } = validation.data;
+  if (decision === "reject") return res.status(200).json(await rejectApplication(applicationId, terms));
+
+  const loan = await approveApplication(applicationId, terms);
+  await disburseApprovedLoan(loan.loan_id, `dev:${loan.loan_id}`);
+  return res.status(201).json({ ...loan, loan_status: "active" });
+}
+
+// POST /v1/dev/loans/:loanId/backdate  { days }
+// Moves the unpaid installments of one of the caller's loans back by `days`,
+// so the next one can be shown as overdue.
+export async function backdateLoan(req, res) {
+  const validation = backdateSchema.safeParse(req.body ?? {});
+  if (!validation.success) {
+    throw new ValidationError({ details: validationDetails(validation.error) });
+  }
+  const { loanId } = req.params;
+  if (!isUuid(loanId)) throw new NotFoundError({ message: "Loan not found." });
+  const result = await pool.query(
+    `UPDATE loan_repayment_schedule s SET due_date = s.due_date - $3::int
+     FROM loans l JOIN account acc ON acc.account_id = l.account_id
+     WHERE s.loan_id = l.loan_id AND l.loan_id = $1 AND acc.user_id = $2 AND NOT s.paid_flag
+     RETURNING s.installment_number`,
+    [loanId, req.user.sub, validation.data.days],
+  );
+  if (result.rowCount === 0) throw new NotFoundError({ message: "Loan not found, or nothing left to pay." });
+  return res.status(200).json({ loan_id: loanId, installments_moved: result.rowCount });
 }

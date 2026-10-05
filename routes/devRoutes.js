@@ -10,6 +10,8 @@ import {
   fundOwnAccount,
   resetTestUser,
   verifyOwnKyc,
+  decideOwnLoanApplication,
+  backdateLoan,
 } from "../controllers/devController.js";
 import { idempotency } from "../utils/idempotency.js";
 import { verifyAccessToken, verifyAccessTokenAllowPending } from "../utils/jwt.js";
@@ -30,5 +32,7 @@ devRouter.post("/recurring/run", verifyAccessToken, runRecurringBilling);
 devRouter.get("/invariants", verifyAccessToken, checkInvariants);
 devRouter.post("/oauth-states/expire", verifyAccessToken, expireOauthState);
 devRouter.post("/brokerage/run-scheduler", verifyAccessToken, runBrokerageScheduler);
+devRouter.post("/loans/applications/:applicationId/decide", verifyAccessToken, decideOwnLoanApplication);
+devRouter.post("/loans/:loanId/backdate", verifyAccessToken, backdateLoan);
 
 export default devRouter;

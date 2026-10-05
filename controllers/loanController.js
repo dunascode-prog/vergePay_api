@@ -221,6 +221,20 @@ export async function getLoanApplication(req, res) {
   return res.status(200).json(result.rows[0]);
 }
 
+// GET /v1/loans/applications: the caller's applications, newest first, so an
+// app can show one that's still waiting for a decision.
+export async function listLoanApplications(req, res) {
+  const result = await pool.query(
+    `SELECT ${APPLICATION_COLUMNS}
+     FROM loan_applications a
+     LEFT JOIN loans l ON l.application_id = a.application_id
+     WHERE a.user_id = $1
+     ORDER BY a.created_at DESC`,
+    [req.user.sub],
+  );
+  return res.status(200).json({ data: result.rows });
+}
+
 // A borrower's loans, and one of them, with the next installment due.
 const LOAN_WITH_PROGRESS = `
     SELECT ${LOAN_COLUMNS},
@@ -442,9 +456,13 @@ async function lockPendingApplication(client, applicationId) {
 // Creates the loan with its final terms. No money moves until disburse.
 export async function approveLoanApplication(req, res) {
   const body = parseBody(approvalSchema, req.body);
+  return res.status(201).json(await approveApplication(req.params.applicationId, body));
+}
 
-  const loan = await withTransaction(async (client) => {
-    const application = await lockPendingApplication(client, req.params.applicationId);
+// Shared with the dev-only helper (controllers/devController.js).
+export function approveApplication(applicationId, body) {
+  return withTransaction(async (client) => {
+    const application = await lockPendingApplication(client, applicationId);
 
     const principal = body.approved_amount_minor ?? application.requested_amount_minor;
     if (principal > application.requested_amount_minor) {
@@ -502,16 +520,17 @@ export async function approveLoanApplication(req, res) {
       }),
     };
   });
-
-  return res.status(201).json(loan);
 }
 
 // POST /v1/loans/applications/:applicationId/reject
 export async function rejectLoanApplication(req, res) {
   const body = parseBody(rejectionSchema, req.body);
+  return res.status(200).json(await rejectApplication(req.params.applicationId, body));
+}
 
-  const application = await withTransaction(async (client) => {
-    const pending = await lockPendingApplication(client, req.params.applicationId);
+export function rejectApplication(applicationId, body) {
+  return withTransaction(async (client) => {
+    const pending = await lockPendingApplication(client, applicationId);
     const result = await client.query(
       `UPDATE loan_applications
        SET status = 'rejected', decision_reason = $2, decided_at = NOW()
@@ -529,8 +548,6 @@ export async function rejectLoanApplication(req, res) {
     });
     return result.rows[0];
   });
-
-  return res.status(200).json(application);
 }
 
 // POST /v1/loans/:loanId/disburse
@@ -538,14 +555,23 @@ export async function rejectLoanApplication(req, res) {
 // routine as a transfer, and generates the repayment schedule, starting one
 // month from today in the borrower's timezone (API doc 7.2).
 export async function disburseLoan(req, res) {
-  const { loanId } = req.params;
+  const { transaction, replayed } = await disburseApprovedLoan(req.params.loanId, `internal:${req.idempotencyKey}`);
+  if (replayed) res.set("Idempotent-Replayed", "true");
+  return res.status(201).json({
+    transaction_id: transaction.transaction_id,
+    loan_id: transaction.loan_id,
+    amount_minor: transaction.amount_minor,
+    status: transaction.status,
+  });
+}
+
+export async function disburseApprovedLoan(loanId, idempotencyKey) {
   if (!isUuid(loanId)) throw loanNotFound();
-  const idempotencyKey = `internal:${req.idempotencyKey}`;
 
   const isSameDisbursement = (existing) =>
     existing.transaction_type === "loan_disbursement" && existing.loan_id === loanId;
 
-  const { transaction, replayed } = await postOnce(idempotencyKey, async (client) => {
+  return postOnce(idempotencyKey, async (client) => {
     const found = await client.query(
       `SELECT l.*, acc.account_status,
               (NOW() AT TIME ZONE u.timezone)::date::text AS borrower_today
@@ -619,14 +645,6 @@ export async function disburseLoan(req, res) {
     });
     return posted;
   }, isSameDisbursement);
-
-  if (replayed) res.set("Idempotent-Replayed", "true");
-  return res.status(201).json({
-    transaction_id: transaction.transaction_id,
-    loan_id: transaction.loan_id,
-    amount_minor: transaction.amount_minor,
-    status: transaction.status,
-  });
 }
 
 // GET /v1/admin/loans/applications?status=pending_review
