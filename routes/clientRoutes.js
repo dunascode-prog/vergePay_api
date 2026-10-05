@@ -1,5 +1,5 @@
 import express from "express";
-import { archiveClient, createClient, getClient, listClients, updateClient } from "../controllers/clientController.js";
+import { archiveClient, createClient, getClient, listClients, restoreClient, updateClient } from "../controllers/clientController.js";
 import { verifyAccessToken } from "../utils/jwt.js";
 
 // The client book: who a customer invoices.
@@ -11,5 +11,6 @@ clientRouter.get("/", listClients);
 clientRouter.get("/:clientId", getClient);
 clientRouter.patch("/:clientId", updateClient);
 clientRouter.delete("/:clientId", archiveClient);
+clientRouter.post("/:clientId/restore", restoreClient);
 
 export default clientRouter;

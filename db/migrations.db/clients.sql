@@ -28,3 +28,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_clients_user_email
     WHERE email IS NOT NULL AND archived_at IS NULL;
 
 CREATE INDEX IF NOT EXISTS idx_clients_user_name ON clients (user_id, lower(name));
+
+-- A fuller client profile, for the clients page: who to talk to, what they
+-- do, where they are, private notes, and a VIP flag the customer sets
+-- themselves. Payment behaviour (revenue, how fast they pay, health) is
+-- worked out from their invoices when read, never stored.
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS contact_name VARCHAR(120);
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS industry VARCHAR(80);
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS location VARCHAR(120);
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS notes VARCHAR(2000);
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS is_vip BOOLEAN NOT NULL DEFAULT FALSE;
