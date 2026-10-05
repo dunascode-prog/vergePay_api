@@ -55,6 +55,11 @@ export const INVOICE_SELECT = `
            i.refunded_at,
            i.refund_reason,
            i.sent_at,
+           -- reminders emailed to the client (analytics: did reminding work?)
+           (SELECT count(*)::int FROM email_log e
+            WHERE e.invoice_id = i.invoice_id AND e.kind = 'reminder') AS reminders_sent,
+           (SELECT max(e.created_at) FROM email_log e
+            WHERE e.invoice_id = i.invoice_id AND e.kind = 'reminder') AS last_reminder_at,
            i.created_at,
            i.pay_token
     FROM invoices i

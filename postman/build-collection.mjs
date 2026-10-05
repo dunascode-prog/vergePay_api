@@ -2049,6 +2049,14 @@ const clientInvoicing = [
     checks: [["a reminder to the client", 'j.kind === "reminder" && j.to_address === "billing@techcorp.test" && j.status === "queued"']],
   }),
   req("Remind again within the hour", "POST", "/invoices/{{ciQuietInvoiceId}}/remind", { status: 429 }),
+  req("The invoice counts its reminders", "GET", "/invoices/{{ciQuietInvoiceId}}", {
+    status: 200,
+    checks: [["one reminder, with its time", "j.reminders_sent === 1 && typeof j.last_reminder_at === \"string\""]],
+  }),
+  req("Invoices with no reminder say so", "GET", "/invoices/{{ciInvoiceId}}", {
+    status: 200,
+    checks: [["none", "j.reminders_sent === 0 && j.last_reminder_at === null"]],
+  }),
   clientInvoice("An invoice for a client with no email", { client_id: "{{ciNoEmailClientId}}", send: true }, {
     status: 201,
     save: [["ciNoEmailInvoiceId", "j.invoice_id"], ["ciNoEmailToken", 'j.pay_url.split("/pay/")[1]']],
@@ -2174,6 +2182,12 @@ const clientInvoicing = [
   balanceIs("Back to ₦300,000", "ciBusinessId", "30000000"),
   clientInvoice("Invoice someone else's client", { client_id: "{{femiClientId}}" }, { status: 422, checks: [["client not found", "Boolean(j.error.details.client_id)"]] }),
 
+  // an overdue client invoice (development backdating works without a billed account)
+  clientInvoice("An invoice that will be late", { send: true, send_email: false }, { status: 201, save: [["ciLateId", "j.invoice_id"]] }),
+  req("Dev: make it 3 days overdue", "POST", "/dev/invoices/{{ciLateId}}/backdate", { body: { days: 3 }, status: 200 }),
+  req("It reads as overdue", "GET", "/invoices/{{ciLateId}}", { status: 200, checks: [["overdue", 'j.invoice_status === "overdue"']] }),
+  req("Cancel it again", "POST", "/invoices/{{ciLateId}}/cancel", { status: 200 }),
+
   // archiving
   req("Archive Bloom Bakery", "DELETE", "/clients/{{ciNoEmailClientId}}", { status: 200, checks: [["archived", "Boolean(j.archived_at)"]] }),
   req("Hidden from the list", "GET", "/clients", { status: 200, checks: [["only TechCorp", 'j.data.length === 1 && j.data[0].client_id === v("ciClientId")']] }),
@@ -2181,7 +2195,7 @@ const clientInvoicing = [
   clientInvoice("Invoice an archived client", { client_id: "{{ciNoEmailClientId}}" }, { status: 422, checks: [["archived", "/archived/.test(JSON.stringify(j))"]] }),
   req("Filter invoices by client", "GET", "/invoices?client_id={{ciClientId}}&limit=100", {
     status: 200,
-    checks: [["only TechCorp's", 'j.data.length === 3 && j.data.every((x) => x.client.client_id === v("ciClientId"))']],
+    checks: [["only TechCorp's (the late one makes 4)", 'j.data.length === 4 && j.data.every((x) => x.client.client_id === v("ciClientId"))']],
   }),
   invariants(),
 ];
