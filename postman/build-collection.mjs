@@ -1987,6 +1987,24 @@ const clientInvoicing = [
   req("Update - nothing", "PATCH", "/clients/{{ciNoEmailClientId}}", { body: {}, status: 400 }),
   req("Unknown client", "GET", "/clients/00000000-0000-4000-8000-000000000000", { status: 404 }),
 
+  // the fuller profile, and what's worked out from invoices
+  req("Client - industry too long", "POST", "/clients", { body: { name: "Long Ltd", industry: "x".repeat(81) }, status: 422, checks: [["industry flagged", "Boolean(j.error.details.industry)"]] }),
+  req("Client - VIP must be true or false", "PATCH", "/clients/{{ciNoEmailClientId}}", { body: { is_vip: "yes" }, status: 422, checks: [["is_vip flagged", "Boolean(j.error.details.is_vip)"]] }),
+  req("Fill in Bloom's profile", "PATCH", "/clients/{{ciNoEmailClientId}}", {
+    body: { contact_name: "Funke Ade", industry: "Food and drink", location: "Yaba, Lagos", notes: "Prefers WhatsApp.", is_vip: true },
+    status: 200,
+    checks: [
+      ["profile saved", 'j.contact_name === "Funke Ade" && j.industry === "Food and drink" && j.location === "Yaba, Lagos" && j.notes === "Prefers WhatsApp." && j.is_vip === true'],
+      ["nothing billed yet: new, no score", 'j.health.score === null && j.health.label === "new" && j.paid_count === 0 && j.revenue.length === 0 && j.recurring_plans.length === 0'],
+    ],
+  }),
+  req("Search clients by industry", "GET", "/clients?q=food", { status: 200, checks: [["just Bloom", 'j.data.length === 1 && j.data[0].client_id === v("ciNoEmailClientId")']] }),
+  req("Clear one profile field", "PATCH", "/clients/{{ciNoEmailClientId}}", {
+    body: { location: null },
+    status: 200,
+    checks: [["location cleared, the rest kept", 'j.location === null && j.industry === "Food and drink" && j.is_vip === true']],
+  }),
+
   // drafts
   clientInvoice("Invoice - no items", { items: [] }, { status: 422, checks: [["items flagged", "Boolean(j.error.details.items)"]] }),
   clientInvoice("Invoice - three decimals of quantity", { items: [{ description: "x", quantity: 1.005, unit_amount_minor: 100 }] }, { status: 422 }),
@@ -2188,11 +2206,24 @@ const clientInvoicing = [
   req("It reads as overdue", "GET", "/invoices/{{ciLateId}}", { status: 200, checks: [["overdue", 'j.invoice_status === "overdue"']] }),
   req("Cancel it again", "POST", "/invoices/{{ciLateId}}/cancel", { status: 200 }),
 
+  // TechCorp's record, from the invoices above
+  req("TechCorp's payment record", "GET", "/clients/{{ciClientId}}", {
+    status: 200,
+    checks: [
+      ["paid and counted", "j.paid_count >= 1 && j.revenue.length >= 1 && j.revenue.every((r) => r.amount_minor > 0) && j.paid_on_time_count <= j.paid_count"],
+      ["counts add up", "j.open_count + j.overdue_count + j.paid_count <= j.invoice_count"],
+      ["a score 0-100 with reasons", 'typeof j.health.score === "number" && j.health.score >= 0 && j.health.score <= 100 && j.health.reasons.length > 0 && ["reliable", "watch", "at_risk"].includes(j.health.label)'],
+      ["its latest invoices, none of them drafts", 'j.invoices.length > 0 && j.invoices.every((i) => i.client.client_id === v("ciClientId") && i.invoice_status !== "draft")'],
+    ],
+  }),
+
   // archiving
   req("Archive Bloom Bakery", "DELETE", "/clients/{{ciNoEmailClientId}}", { status: 200, checks: [["archived", "Boolean(j.archived_at)"]] }),
   req("Hidden from the list", "GET", "/clients", { status: 200, checks: [["only TechCorp", 'j.data.length === 1 && j.data[0].client_id === v("ciClientId")']] }),
   req("Still there with archived ones", "GET", "/clients?include_archived=true", { status: 200, checks: [["both", "j.data.length === 2"]] }),
   clientInvoice("Invoice an archived client", { client_id: "{{ciNoEmailClientId}}" }, { status: 422, checks: [["archived", "/archived/.test(JSON.stringify(j))"]] }),
+  req("Restore Bloom Bakery", "POST", "/clients/{{ciNoEmailClientId}}/restore", { status: 200, checks: [["back, profile kept", 'j.archived_at === null && j.is_vip === true']] }),
+  req("Back in the list", "GET", "/clients", { status: 200, checks: [["both again", "j.data.length === 2"]] }),
   req("Filter invoices by client", "GET", "/invoices?client_id={{ciClientId}}&limit=100", {
     status: 200,
     checks: [["only TechCorp's (the late one makes 4)", 'j.data.length === 4 && j.data.every((x) => x.client.client_id === v("ciClientId"))']],

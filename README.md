@@ -23,7 +23,7 @@ Built by **[Seyitan Omodara](https://github.com/dunascode-prog)** · Frontend: [
 | **Payments** | Flutterwave v3 hosted checkout, card tokenization, 3-D Secure and permanent virtual accounts, verified on the real sandbox |
 | **Investments** | Alpaca brokerage connected with OAuth 2.0; holdings synced by a BullMQ worker on Redis, with retries, backoff and a schedule |
 | **Security** | TOTP 2FA built from the RFC, HttpOnly cookie sessions with one-time refresh tokens, encrypted secrets, PCI-safe card handling |
-| **Testing** | 676-request Postman suite with **1,120 assertions**, including concurrency races, forged-webhook and OAuth attacks, and background-job retries, plus an end-to-end WebSocket check, all passing |
+| **Testing** | 684-request Postman suite with **1,140 assertions**, including concurrency races, forged-webhook and OAuth attacks, and background-job retries, plus an end-to-end WebSocket check, all passing |
 
 ---
 
@@ -93,6 +93,9 @@ A freelancer's clients mostly aren't on VergePay, so an invoice goes to a client
 - **Paid like a card top-up:** checkout is a pending payment from the processor's clearing account into the issuer's wallet. It settles only after Flutterwave's verify endpoint agrees on reference, currency and amount, and the invoice is marked paid in that same DB transaction. Webhook or redirect, whichever arrives first, does it once.
 - **Two payers at once:** if a second payment lands after the invoice is paid, the money is still credited (it really arrived) and the issuer is alerted to return it. Nothing is silently lost.
 - **Email that can't block a request:** invoices, reminders and receipts are saved exactly as sent (`email_log`), then delivered by the worker with retries. Any SMTP service works; development uses Ethereal's free fake inboxes, with a preview link per message.
+
+### A client's health, explained
+Every client read comes with a 0–100 health score worked out from their invoices on read, so it's never stale ([`services/clients.js`](services/clients.js)): 60% paying on time (an invoice still unpaid past its due date counts as late), 25% how late on average, 15% how much is overdue now. Anything more than 30 days overdue caps it at "at risk". The reasons come with it ("Paid 2 of 3 on time", "1 invoice overdue (₦65,000), the oldest by 5 days"), and a client with no history is "new" rather than given a made-up number.
 
 ### Recurring billing that can't bill twice
 A plan invoices one client the same amount every week, month, quarter or year ([`services/recurring.js`](services/recurring.js)). Each invoice goes through the same path as a hand-made one: a number, a pay link and, if asked, an email.
@@ -228,8 +231,9 @@ The full designs are in [`documentation/`](documentation/): the API design (`Fin
 
 | Method | Endpoint | |
 |---|---|---|
-| POST / GET | `/v1/clients` | The client book (name, email, phone), with each client's invoice count and outstanding total. Clients don't need VergePay |
-| GET / PATCH / DELETE | `/v1/clients/:id` | Edit; delete archives (hidden from pickers, invoices kept) |
+| POST / GET | `/v1/clients` | The client book: name, contact, email, phone, industry, location, notes and a VIP flag. Search any of them. Every client comes with how they pay, worked out from their invoices: paid and owed per currency, overdue, on-time payments, average days to pay, linked recurring plans, and a **health score** (0–100, with the reasons in words). Clients don't need VergePay |
+| GET / PATCH / DELETE | `/v1/clients/:id` | One client with their latest invoices; edit any field (`null` clears); delete archives (hidden from pickers, invoices kept) |
+| POST | `/v1/clients/:id/restore` | Back from the archive |
 | POST | `/v1/invoices` | To a client, with line items: saved as a draft, or sent at once (`send: true`). Or to a VergePay account number, sent at once |
 | GET | `/v1/invoices` | Issued or received, filter by status or client, cursor pagination. Overdue is derived, never stale |
 | GET | `/v1/invoices/:id` | Visible to the issuer and the billed user only; the issuer also sees every email sent about it |
@@ -304,7 +308,7 @@ An alert is written for every settled movement on a customer's wallet: a credit 
 
 ## Testing
 
-The whole API is exercised by a Postman suite, [`postman/vergepay-api.postman_collection.json`](postman/vergepay-api.postman_collection.json): **676 requests and 1,120 assertions**, grouped into 15 folders from sign-up to brokerage disconnection. It isn't just happy paths:
+The whole API is exercised by a Postman suite, [`postman/vergepay-api.postman_collection.json`](postman/vergepay-api.postman_collection.json): **684 requests and 1,140 assertions**, grouped into 15 folders from sign-up to brokerage disconnection. It isn't just happy paths:
 
 - **Every edge case:** validation, wrong owner, wrong state (`409`), insufficient funds, replayed keys, and retries after a simulated crash.
 - **Races:** simultaneous payments, refunds, repayments and sign-ins, fired at the same instant from test scripts.
@@ -313,7 +317,7 @@ The whole API is exercised by a Postman suite, [`postman/vergepay-api.postman_co
 - **The background worker:** each brokerage sync is watched until it finishes, including retries with backoff, giving up after 5 attempts, and the scheduler.
 - **Recurring billing:** a plan that starts today billing at once, a run that finds nothing more to bill (no double billing), missed months caught up one invoice each, pausing and resuming without back-billing, edits, a plan that can't bill saying why exactly once, cancelling, and other customers' plans.
 - **Ledger invariants** checked across the database after each money-moving folder.
-- **Invoicing clients:** drafts and their rounding, sending and email (built but not sent: `EMAIL_TRANSPORT=json`), the reminder throttle and reminder counts, an invoice made overdue (dev backdate), what the public pay page hides, checkout paid, declined, tampered and paid twice at once, the webhook, cancelling, and paying a link from a wallet.
+- **Invoicing clients:** the client profile (validation, search by industry, clearing a field, archive and restore) and a client's payment record and health, drafts and their rounding, sending and email (built but not sent: `EMAIL_TRANSPORT=json`), the reminder throttle and reminder counts, an invoice made overdue (dev backdate), what the public pay page hides, checkout paid, declined, tampered and paid twice at once, the webhook, cancelling, and paying a link from a wallet.
 - **Live updates:** Newman can't open sockets, so [`postman/realtime-check.mjs`](postman/realtime-check.mjs) (`npm run test:realtime`) connects real WebSockets for two customers and checks 17 things: who may connect, alerts and balance events arriving live on both sides and in a second tab, a rolled-back transfer sending nothing, one customer never seeing another's events, and refusal after sign-out.
 
 Every request's expected status and checks are listed in **[`postman/EXPECTED_RESULTS.md`](postman/EXPECTED_RESULTS.md)**, generated from the same source as the collection. A second collection runs the real Flutterwave sandbox end to end.
