@@ -10,6 +10,7 @@ import { ipKeyGenerator } from "express-rate-limit";
 import { moneyLimiter, signinLimiter, twoFactorLimiter } from "../utils/rateLimiters.js";
 import { endSession, issueSession } from "../utils/session.js";
 import { brokerageQueue } from "../services/queue.js";
+import { billDuePlans } from "../services/recurring.js";
 import { isUuid, validationDetails } from "../utils/validation.js";
 
 // ₦10,000,000 (in kobo) per top-up keeps test balances in a sane range.
@@ -187,6 +188,43 @@ export async function backdateInvoice(req, res) {
   );
   if (result.rowCount === 0) throw new NotFoundError({ message: "Invoice not found." });
   return res.status(200).json({ invoice_id: invoiceId, due_date: result.rows[0].due_date });
+}
+
+// POST /v1/dev/recurring-plans/:planId/backdate  { days }
+// Moves one of the caller's plans back in time: its start date and next
+// billing date go back by `days`, as if it had been made that long ago. With
+// /dev/recurring/run, this bills it today (or catches up missed cycles).
+export async function backdateRecurringPlan(req, res) {
+  const validation = backdateSchema.safeParse(req.body ?? {});
+  if (!validation.success) {
+    throw new ValidationError({ details: validationDetails(validation.error) });
+  }
+  const { planId } = req.params;
+  if (!isUuid(planId)) throw new NotFoundError({ message: "Plan not found." });
+  const result = await pool.query(
+    `UPDATE recurring_plans
+     SET start_date = start_date - $3::int,
+         next_billing_date = recurring_billing_date(start_date - $3::int, frequency, next_cycle)
+     WHERE plan_id = $1 AND user_id = $2
+     RETURNING to_char(start_date, 'YYYY-MM-DD') AS start_date, to_char(next_billing_date, 'YYYY-MM-DD') AS next_billing_date`,
+    [planId, req.user.sub, validation.data.days],
+  );
+  if (result.rowCount === 0) throw new NotFoundError({ message: "Plan not found." });
+  return res.status(200).json({ plan_id: planId, ...result.rows[0] });
+}
+
+// POST /v1/dev/recurring/run
+// Runs the recurring-billing job now, for the caller's due plans only (the
+// worker's schedule runs it for everyone).
+export async function runRecurringBilling(req, res) {
+  const due = await pool.query(
+    `SELECT p.plan_id FROM recurring_plans p JOIN users u ON u.user_id = p.user_id
+     WHERE p.user_id = $1 AND p.plan_status = 'active'
+       AND p.next_billing_date <= (NOW() AT TIME ZONE u.timezone)::date`,
+    [req.user.sub],
+  );
+  const result = await billDuePlans({ planIds: due.rows.map((r) => r.plan_id) });
+  return res.status(200).json(result);
 }
 
 const expireStateSchema = z.strictObject({ state: z.string().min(1) });

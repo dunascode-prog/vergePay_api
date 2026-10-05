@@ -5,6 +5,7 @@
 // sync-link jobs are retried with exponential backoff when the brokerage is
 // down or rate limiting; a refused token isn't retried, the link is marked
 // expired instead. A scheduler queues a sync of every due link on a timer.
+// Another sends the invoices recurring plans owe (services/recurring.js).
 import { UnrecoverableError, Worker } from "bullmq";
 import connectDB from "./db/connectDB.js";
 import env from "./env.js";
@@ -12,7 +13,16 @@ import logger from "./logger.js";
 import { BrokerageAuthError } from "./services/alpaca.js";
 import { dueLinkIds, expireLink, setSyncStatus, syncLink } from "./services/brokerageSync.js";
 import { deliverEmail } from "./services/email.js";
-import { BROKERAGE_QUEUE, EMAIL_QUEUE, brokerageQueue, enqueueLinkSync, redisConnection } from "./services/queue.js";
+import {
+  BROKERAGE_QUEUE,
+  EMAIL_QUEUE,
+  RECURRING_QUEUE,
+  brokerageQueue,
+  enqueueLinkSync,
+  recurringQueue,
+  redisConnection,
+} from "./services/queue.js";
+import { billDuePlans } from "./services/recurring.js";
 
 await connectDB();
 
@@ -88,9 +98,30 @@ const emailWorker = new Worker(
 emailWorker.on("ready", () => console.log(`worker ready: ${EMAIL_QUEUE}`));
 emailWorker.on("error", (err) => logger.error({ message: "email worker error", error: err.message }));
 
+// Recurring billing: one run at a time is plenty (each plan is locked while
+// it's billed, so a second worker would only skip what the first is doing).
+const billingWorker = new Worker(
+  RECURRING_QUEUE,
+  async (job) => {
+    if (job.name !== "bill-due-plans") throw new UnrecoverableError(`Unknown job ${job.name}`);
+    const result = await billDuePlans();
+    if (result.invoices) logger.info({ message: "recurring invoices sent", ...result });
+    return result;
+  },
+  { connection: redisConnection(), concurrency: 1, drainDelay: 30, stalledInterval: 120_000 },
+);
+billingWorker.on("ready", () => console.log(`worker ready: ${RECURRING_QUEUE}, every ${env.recurring.intervalMs / 1000}s`));
+billingWorker.on("error", (err) => logger.error({ message: "billing worker error", error: err.message }));
+
+await recurringQueue().upsertJobScheduler(
+  "bill-due-plans",
+  { every: env.recurring.intervalMs },
+  { name: "bill-due-plans", opts: { attempts: 1, removeOnComplete: true, removeOnFail: true } },
+);
+
 async function shutdown() {
-  await Promise.all([worker.close(), emailWorker.close()]);
-  await brokerageQueue().close();
+  await Promise.all([worker.close(), emailWorker.close(), billingWorker.close()]);
+  await Promise.all([brokerageQueue().close(), recurringQueue().close()]);
   process.exit(0);
 }
 process.on("SIGINT", shutdown);

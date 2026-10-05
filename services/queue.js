@@ -74,8 +74,23 @@ export function emailQueue() {
   return mailQueue;
 }
 
+// Recurring billing (services/recurring.js). One scheduled job,
+// bill-due-plans, every RECURRING_BILLING_INTERVAL_MS. A failed run isn't
+// retried: the next one picks up whatever is still due.
+export const RECURRING_QUEUE = "recurring-billing";
+
+let billingQueue;
+export function recurringQueue() {
+  billingQueue ??= new Queue(RECURRING_QUEUE, {
+    connection: redisConnection(),
+    defaultJobOptions: { attempts: 1, removeOnComplete: true, removeOnFail: true },
+  });
+  return billingQueue;
+}
+
 export async function closeQueue() {
-  await Promise.all([queue?.close(), mailQueue?.close()]);
+  await Promise.all([queue?.close(), mailQueue?.close(), billingQueue?.close()]);
   queue = undefined;
   mailQueue = undefined;
+  billingQueue = undefined;
 }

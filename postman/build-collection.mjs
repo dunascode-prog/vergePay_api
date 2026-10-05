@@ -2203,6 +2203,184 @@ const clientInvoicing = [
 // ---------------------------------------------------------------------------
 // 9. Wrap-up
 
+// ---------------------------------------------------------------------------
+// Recurring billing: plans that invoice a client on a schedule
+
+const recurringPlan = (name, extra, opts) =>
+  req(name, "POST", "/recurring-plans", {
+    body: {
+      issuer_account_id: "{{rbBusinessId}}",
+      client_id: "{{rbClientId}}",
+      description: "Monthly retainer",
+      amount_minor: 15000000,
+      frequency: "monthly",
+      start_date: "{{rbTomorrow}}",
+      days_until_due: 7,
+      send_email: false,
+      ...extra,
+    },
+    ...opts,
+  });
+const runBilling = (name, checks) => req(name, "POST", "/dev/recurring/run", { status: 200, checks });
+const planIs = (name, planVar, checks) => req(name, "GET", `/recurring-plans/{{${planVar}}}`, { status: 200, checks });
+// dates as the API sees them: in the user's timezone (Africa/Lagos)
+const DATE_VARS = [
+  'const day = (n) => new Date(Date.now() + n * 86400000).toLocaleDateString("en-CA", { timeZone: "Africa/Lagos" });',
+  'pm.collectionVariables.set("rbToday", day(0));',
+  'pm.collectionVariables.set("rbTomorrow", day(1));',
+  'pm.collectionVariables.set("rbYesterday", day(-1));',
+  'pm.collectionVariables.set("rbInAWeek", day(7));',
+  'pm.collectionVariables.set("rbInTwoWeeks", day(14));',
+  'pm.collectionVariables.set("rbTooFar", day(400));',
+];
+
+const recurring = [
+  ...newUser("biller", "the biller (Rita)"),
+  req("The dates this folder uses", "GET", "/users/me", { status: 200, pre: DATE_VARS }),
+  req("A plan before the identity check", "POST", "/recurring-plans", {
+    body: {
+      issuer_account_id: "00000000-0000-4000-8000-000000000000",
+      client_id: "00000000-0000-4000-8000-000000000000",
+      description: "x",
+      amount_minor: 100,
+      frequency: "monthly",
+      start_date: "{{rbTomorrow}}",
+    },
+    status: 403,
+    checks: [["KYC required", 'errorCode === "KYC_REQUIRED"']],
+  }),
+  kycVerify(),
+  openAccount("Rita: personal wallet", "rbPersonalId"),
+  openAccount("Rita: business wallet", "rbBusinessId", { purpose: "business" }),
+  req("Add client Northwind (with email)", "POST", "/clients", {
+    body: { name: "Northwind Studio", email: "accounts@northwind.test" },
+    status: 201,
+    save: [["rbClientId", "j.client_id"]],
+  }),
+
+  // validation
+  req("Plan - empty body", "POST", "/recurring-plans", { body: {}, status: 400 }),
+  recurringPlan("Plan - unknown frequency", { frequency: "daily" }, { status: 422, checks: [["frequency flagged", "Boolean(j.error.details.frequency)"]] }),
+  recurringPlan("Plan - zero amount", { amount_minor: 0 }, { status: 422, checks: [["amount flagged", "Boolean(j.error.details.amount_minor)"]] }),
+  recurringPlan("Plan - start date in the past", { start_date: "{{rbYesterday}}" }, { status: 422, checks: [["start_date flagged", "Boolean(j.error.details.start_date)"]] }),
+  recurringPlan("Plan - start more than a year out", { start_date: "{{rbTooFar}}" }, { status: 422, checks: [["start_date flagged", "Boolean(j.error.details.start_date)"]] }),
+  recurringPlan("Plan - payment terms over 90 days", { days_until_due: 91 }, { status: 422, checks: [["days_until_due flagged", "Boolean(j.error.details.days_until_due)"]] }),
+  recurringPlan("Plan - unknown client", { client_id: "00000000-0000-4000-8000-000000000000" }, { status: 422, checks: [["client flagged", "Boolean(j.error.details.client_id)"]] }),
+  recurringPlan("Plan - unknown wallet", { issuer_account_id: "00000000-0000-4000-8000-000000000000" }, { status: 422, checks: [["wallet flagged", "Boolean(j.error.details.issuer_account_id)"]] }),
+
+  // a plan that starts tomorrow sends nothing yet
+  recurringPlan("Monthly plan starting tomorrow", {}, {
+    status: 201,
+    save: [["rbMonthlyId", "j.plan_id"]],
+    checks: [
+      ["active, first bill tomorrow, nothing sent", 'j.plan_status === "active" && j.next_billing_date === v("rbTomorrow") && j.invoices_generated === 0 && j.invoices.length === 0'],
+      ["in the wallet's currency, for Northwind", 'j.currency_code === "NGN" && j.client.name === "Northwind Studio" && j.amount_minor === 15000000 && j.days_until_due === 7'],
+    ],
+  }),
+  runBilling("Run billing: nothing due yet", [["no invoices", "j.invoices === 0"]]),
+
+  // a plan that starts today sends its first invoice at once
+  recurringPlan("Weekly plan starting today (emails the client)", {
+    description: "Website care",
+    amount_minor: 2000000,
+    frequency: "weekly",
+    start_date: "{{rbToday}}",
+    days_until_due: 14,
+    send_email: true,
+  }, {
+    status: 201,
+    save: [["rbWeeklyId", "j.plan_id"], ["rbFirstInvoiceId", "j.invoices[0].invoice_id"]],
+    checks: [
+      ["first invoice sent now", 'j.invoices_generated === 1 && j.invoices.length === 1 && j.invoices[0].invoice_status === "open" && /^INV-\\d{4}$/.test(j.invoices[0].invoice_number)'],
+      ["due in 14 days; next bill in a week", 'j.invoices[0].due_date === v("rbInTwoWeeks") && j.next_billing_date === v("rbInAWeek") && j.last_invoice_at !== null'],
+    ],
+  }),
+  req("The invoice it sent", "GET", "/invoices/{{rbFirstInvoiceId}}", {
+    status: 200,
+    checks: [
+      ["names its plan and cycle", 'j.recurring_plan_id === v("rbWeeklyId") && j.recurring_cycle === 0'],
+      ["one line: the plan and the period", 'j.items.length === 1 && j.items[0].description.startsWith("Website care (") && j.items[0].amount_minor === 2000000 && j.amount_due_minor === 2000000'],
+      ["a pay link, emailed to the client", 'Boolean(j.pay_url) && j.emails.some((e) => e.kind === "invoice" && e.to_address === "accounts@northwind.test")'],
+    ],
+  }),
+  req("Rita is told it went out", "GET", "/notifications?limit=1", {
+    status: 200,
+    checks: [["recurring invoice alert", 'j.data[0].kind === "recurring_invoice_sent" && j.data[0].title.includes("sent to Northwind Studio")']],
+  }),
+  runBilling("Run billing again: nothing more", [["no invoices (no double billing)", "j.invoices === 0"]]),
+
+  // missed cycles are caught up, one invoice each
+  req("Dev: make the monthly plan 70 days old", "POST", "/dev/recurring-plans/{{rbMonthlyId}}/backdate", { body: { days: 70 }, status: 200 }),
+  runBilling("Run billing: catches up the missed months", [["three invoices", "j.invoices === 3"]]),
+  planIs("Three invoices, one per cycle", "rbMonthlyId", [
+    ["cycles 2, 1, 0", 'j.invoices_generated === 3 && j.invoices.map((i) => i.recurring_cycle).join() === "2,1,0"'],
+    ["not born overdue: due a week from today", 'j.invoices.every((i) => i.due_date === v("rbInAWeek") && i.invoice_status === "open")'],
+    ["next bill is in the future", 'j.next_billing_date > v("rbToday")'],
+  ]),
+
+  // pausing
+  req("Pause the monthly plan", "POST", "/recurring-plans/{{rbMonthlyId}}/pause", {
+    status: 200,
+    checks: [["paused", 'j.plan_status === "paused" && typeof j.paused_at === "string"']],
+  }),
+  req("Pause it again", "POST", "/recurring-plans/{{rbMonthlyId}}/pause", { status: 409 }),
+  req("Change the amount while paused", "PATCH", "/recurring-plans/{{rbMonthlyId}}", {
+    body: { amount_minor: 17500000, description: "Monthly retainer (new rate)" },
+    status: 200,
+    checks: [["saved for future invoices", 'j.amount_minor === 17500000 && j.description === "Monthly retainer (new rate)" && j.invoices[0].amount_due_minor === 15000000']],
+  }),
+  req("Edit - nothing", "PATCH", "/recurring-plans/{{rbMonthlyId}}", { body: {}, status: 422 }),
+  req("Dev: 40 more days pass while paused", "POST", "/dev/recurring-plans/{{rbMonthlyId}}/backdate", { body: { days: 40 }, status: 200 }),
+  runBilling("Run billing: a paused plan isn't billed", [["no invoices", "j.invoices === 0"]]),
+  req("Resume the monthly plan", "POST", "/recurring-plans/{{rbMonthlyId}}/resume", {
+    status: 200,
+    checks: [
+      ["active, next bill from today", 'j.plan_status === "active" && j.paused_at === null && j.next_billing_date >= v("rbToday")'],
+      ["the paused time isn't billed", "j.invoices_generated <= 4"],
+    ],
+  }),
+  req("Resume it again", "POST", "/recurring-plans/{{rbMonthlyId}}/resume", { status: 409 }),
+
+  // a plan that can't bill says why, once
+  req("Archive Northwind", "DELETE", "/clients/{{rbClientId}}", { status: 200 }),
+  req("Dev: a week passes on the weekly plan", "POST", "/dev/recurring-plans/{{rbWeeklyId}}/backdate", { body: { days: 7 }, status: 200 }),
+  runBilling("Run billing: the client is archived", [["nothing sent", "j.invoices === 0"]]),
+  planIs("The plan says why", "rbWeeklyId", [
+    ["reason saved, still one invoice", '/archived/.test(j.last_error) && j.invoices_generated === 1 && j.plan_status === "active"'],
+  ]),
+  req("Rita is told it failed", "GET", "/notifications?limit=1", {
+    status: 200,
+    checks: [["failure alert", 'j.data[0].kind === "recurring_invoice_failed" && j.data[0].title.includes("Website care")']],
+  }),
+  runBilling("Run billing again: still stuck", [["nothing sent", "j.invoices === 0"]]),
+  req("...and not told twice", "GET", "/notifications?limit=2", {
+    status: 200,
+    checks: [["one failure alert", 'j.data.filter((x) => x.kind === "recurring_invoice_failed").length === 1']],
+  }),
+
+  // cancelling
+  req("Cancel the weekly plan", "POST", "/recurring-plans/{{rbWeeklyId}}/cancel", {
+    status: 200,
+    checks: [["cancelled, no next bill", 'j.plan_status === "cancelled" && j.next_billing_date === null && typeof j.cancelled_at === "string"']],
+  }),
+  req("Cancel it again", "POST", "/recurring-plans/{{rbWeeklyId}}/cancel", { status: 409 }),
+  req("Resume a cancelled plan", "POST", "/recurring-plans/{{rbWeeklyId}}/resume", { status: 409 }),
+  req("Edit a cancelled plan", "PATCH", "/recurring-plans/{{rbWeeklyId}}", { body: { amount_minor: 100 }, status: 409 }),
+
+  // listing
+  req("List plans", "GET", "/recurring-plans", { status: 200, checks: [["both, newest first", 'j.data.length === 2 && j.data[0].plan_id === v("rbWeeklyId")']] }),
+  req("List cancelled plans", "GET", "/recurring-plans?status=cancelled", { status: 200, checks: [["just the weekly one", 'j.data.length === 1 && j.data[0].plan_id === v("rbWeeklyId")']] }),
+  req("List - bad status", "GET", "/recurring-plans?status=bogus", { status: 422 }),
+  req("Unknown plan", "GET", "/recurring-plans/00000000-0000-4000-8000-000000000000", { status: 404 }),
+  req("Malformed plan id", "GET", "/recurring-plans/not-a-plan", { status: 404 }),
+
+  // someone else's plan
+  ...newUser("snoop", "another customer"),
+  req("Another customer: Rita's plan is hidden", "GET", "/recurring-plans/{{rbMonthlyId}}", { status: 404 }),
+  req("Another customer: can't pause it", "POST", "/recurring-plans/{{rbMonthlyId}}/pause", { status: 404 }),
+  req("Another customer: can't backdate it", "POST", "/dev/recurring-plans/{{rbMonthlyId}}/backdate", { body: { days: 1 }, status: 404 }),
+];
+
 const wrapUp = [
   signIn("ada"),
   req("2FA: start setup (for the brute-force check)", "POST", "/auth/2fa/enable", { status: 200 }),
@@ -2329,7 +2507,8 @@ const main = collection(
     folder("10. Investments", "Connecting an Alpaca brokerage account with OAuth (approve, deny, replayed, forged and expired states, reconnect), background syncs by the BullMQ worker (retries with backoff, giving up, the scheduler, a revoked token), the synced holdings, and disconnecting. A fresh investor, against the Alpaca stand-in; needs the worker running.", investments),
     folder("11. Notifications", "Debit and credit alerts written with the money: a top-up, a transfer (both sides, named, with the note), an idempotent replay that alerts nobody twice, a move between own wallets, paging, read and read-all, and someone else's alert. Two fresh customers. Live delivery over the WebSocket: npm run test:realtime.", notifications),
     folder("12. Invoicing clients and pay links", "The client book, draft invoices with line items (rounding to the kobo), sending with a number, pay link and email (sent by the worker), reminders and their throttle, the public pay page (what it hides), Flutterwave checkout through the stand-in (paid, declined, tampered, two payers at once, the webhook), cancelling, a VergePay customer paying the link from their wallet, refunds, archiving, and other users' clients. Two fresh customers; needs the worker running.", clientInvoicing),
-    folder("13. Wrap-up", "The 2FA brute-force limit, resetting the test users, and logout.", wrapUp),
+    folder("13. Recurring billing", "Plans that invoice a client on a schedule: validation, a plan that starts today billing at once (number, pay link, email), the scheduled run (no double billing), catching up missed cycles, pausing (not billed while paused, resuming without back-billing), editing, a plan that can't bill saying why once, cancelling, listing, and other users. A fresh customer; the billing job is run through /dev/recurring/run.", recurring),
+    folder("14. Wrap-up", "The 2FA brute-force limit, resetting the test users, and logout.", wrapUp),
   ],
 );
 

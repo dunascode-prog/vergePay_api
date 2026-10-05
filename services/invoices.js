@@ -1,7 +1,7 @@
 import crypto from "crypto";
 import env from "../env.js";
 import { writeAudit } from "../utils/audit.js";
-import { ValidationError } from "../utils/errorStr.js";
+import { ConflictError, KycRequiredError, ValidationError } from "../utils/errorStr.js";
 import { queueEmail } from "./email.js";
 import { invoiceEmail, receiptEmail } from "./invoiceEmails.js";
 import { recordUserNotification, formatMoney } from "./notifications.js";
@@ -55,6 +55,9 @@ export const INVOICE_SELECT = `
            i.refunded_at,
            i.refund_reason,
            i.sent_at,
+           -- sent by a recurring plan (services/recurring.js), and which cycle
+           i.recurring_plan_id,
+           i.recurring_cycle,
            -- reminders emailed to the client (analytics: did reminding work?)
            (SELECT count(*)::int FROM email_log e
             WHERE e.invoice_id = i.invoice_id AND e.kind = 'reminder') AS reminders_sent,
@@ -234,4 +237,82 @@ export async function emailReceipt(db, invoiceId, toAddress) {
   const { invoice, row } = loaded;
   const { subject, html, text } = receiptEmail(invoice, { payUrl: invoice.pay_url, paidAt: invoice.paid_at ?? new Date() });
   return queueEmail(db, { userId: row.issuer_user_id, invoiceId, kind: "receipt", to: toAddress, subject, html, text });
+}
+
+// Shared by invoices (controllers/invoiceController.js) and recurring
+// billing (services/recurring.js).
+
+export async function requireVerifiedKyc(db, userId, message) {
+  const result = await db.query(`SELECT kyc_status FROM users WHERE user_id = $1`, [userId]);
+  if (result.rows[0]?.kyc_status !== "verified") throw new KycRequiredError({ message });
+}
+
+export const KYC_TO_INVOICE = "Identity verification is required before you can send invoices.";
+export const KYC_TO_PAY = "Identity verification is required before you can move money.";
+
+// The issuing wallet: the caller's own current/savings account, active.
+export async function checkIssuerAccount(client, userId, accountId) {
+  const issuer = await client.query(
+    `SELECT a.account_type, a.account_status, a.currency_code,
+            (NOW() AT TIME ZONE u.timezone)::date::text AS today
+     FROM account a JOIN users u ON u.user_id = a.user_id
+     WHERE a.account_id = $1 AND a.user_id = $2 AND NOT a.is_system`,
+    [accountId, userId],
+  );
+  const from = issuer.rows[0];
+  if (!from) {
+    throw new ValidationError({ details: { issuer_account_id: ["Account not found."] } });
+  }
+  if (!["current", "savings"].includes(from.account_type)) {
+    throw new ValidationError({
+      details: { issuer_account_id: ["Invoices can only be paid into a current or savings account."] },
+    });
+  }
+  if (from.account_status !== "active") {
+    throw new ConflictError({ message: `The issuing account is ${from.account_status}.` });
+  }
+  return from;
+}
+
+export async function checkClient(client, userId, clientId) {
+  const found = await client.query(
+    `SELECT client_id, name, email, archived_at FROM clients WHERE client_id = $1 AND user_id = $2`,
+    [clientId, userId],
+  );
+  const row = found.rows[0];
+  if (!row) throw new ValidationError({ details: { client_id: ["Client not found."] } });
+  if (row.archived_at) throw new ValidationError({ details: { client_id: ["This client is archived."] } });
+  return row;
+}
+
+export function checkDueDate(dueDate, today) {
+  if (dueDate < today) throw new ValidationError({ details: { due_date: ["Can't be in the past."] } });
+}
+
+// Draft -> open: number, pay link, sent time. Inside the caller's DB
+// transaction, with the invoice row locked.
+export async function markSent(client, invoiceId, userId) {
+  const number = await nextInvoiceNumber(client, userId);
+  await client.query(
+    `UPDATE invoices
+     SET invoice_status = 'open', invoice_number = $2, pay_token = COALESCE(pay_token, $3), sent_at = NOW()
+     WHERE invoice_id = $1`,
+    [invoiceId, number, newPayToken()],
+  );
+  await writeAudit(client, {
+    actorId: userId,
+    entityType: "invoice",
+    entityId: invoiceId,
+    action: "status_change",
+    before: { invoice_status: "draft" },
+    after: { invoice_status: "open", invoice_number: number },
+  });
+}
+
+// Emails a just-sent invoice to its client, if asked and possible.
+export async function emailIfWanted(client, invoiceId, userId, sendEmail) {
+  if (sendEmail === false) return null;
+  const loaded = await loadInvoice(client, invoiceId, userId);
+  if (!loaded.invoice.client?.email) return null;
+  return emailInvoice(client, loaded.invoice, { kind: "invoice", userId });
 }

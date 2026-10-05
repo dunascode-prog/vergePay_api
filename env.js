@@ -107,6 +107,12 @@ const env = {
     // first retry delay; each retry doubles it
     retryDelayMs: parseInt(process.env.BROKERAGE_RETRY_DELAY_MS, 10) || 5000,
   },
+  // Recurring billing (services/recurring.js): how often the worker looks
+  // for plans that are due. Plans bill by date, so this only sets how soon
+  // after midnight (in the customer's timezone) the invoice goes out.
+  recurring: {
+    intervalMs: parseInt(process.env.RECURRING_BILLING_INTERVAL_MS, 10) || 15 * 60 * 1000,
+  },
   // Identity verification (services/kyc.js). "sandbox" decides submissions
   // itself, for development and tests; anything else leaves them pending for
   // a real provider's webhook or a back-office review. Never sandbox in production.

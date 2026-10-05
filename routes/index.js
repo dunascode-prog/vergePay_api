@@ -7,6 +7,7 @@ import loanRouter from "./loanRoutes.js";
 import adminRouter from "./adminRoutes.js";
 import invoiceRouter from "./invoiceRoutes.js";
 import clientRouter from "./clientRoutes.js";
+import recurringPlanRouter from "./recurringPlanRoutes.js";
 import payLinkRouter from "./payLinkRoutes.js";
 import cardRouter from "./cardRoutes.js";
 import webhookRouter from "./webhookRoutes.js";
@@ -25,6 +26,7 @@ export default function registerRoutes(app) {
   app.use("/v1/loans", loanRouter);
   app.use("/v1/invoices", invoiceRouter);
   app.use("/v1/clients", clientRouter);
+  app.use("/v1/recurring-plans", recurringPlanRouter);
   // public: invoice pay links
   app.use("/v1/pay", payLinkRouter);
   app.use("/v1/cards", cardRouter);

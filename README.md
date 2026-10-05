@@ -16,14 +16,14 @@ Built by **[Seyitan Omodara](https://github.com/dunascode-prog)** · Frontend: [
 
 | | |
 |---|---|
-| **What it is** | A REST API for money: open accounts, move money, lend, invoice clients (who pay through a link), and fund accounts by card or bank transfer |
-| **Endpoints** | 72, across auth, accounts, transactions, loans, invoices, clients, public pay links, cards, investments, notifications, webhooks and back office, plus a live WebSocket |
+| **What it is** | A REST API for money: open accounts, move money, lend, invoice clients (who pay through a link), bill them on a schedule, and fund accounts by card or bank transfer |
+| **Endpoints** | 79, across auth, accounts, transactions, loans, invoices, clients, recurring billing, public pay links, cards, investments, notifications, webhooks and back office, plus a live WebSocket |
 | **Live updates** | Debit/credit alerts written in the same DB transaction as the money, pushed over a WebSocket after commit, fanned out across processes with Redis pub/sub |
 | **Money model** | Double-entry ledger in integer minor units (kobo). Balances are cached, but the ledger is the truth |
 | **Payments** | Flutterwave v3 hosted checkout, card tokenization, 3-D Secure and permanent virtual accounts, verified on the real sandbox |
 | **Investments** | Alpaca brokerage connected with OAuth 2.0; holdings synced by a BullMQ worker on Redis, with retries, backoff and a schedule |
 | **Security** | TOTP 2FA built from the RFC, HttpOnly cookie sessions with one-time refresh tokens, encrypted secrets, PCI-safe card handling |
-| **Testing** | 616-request Postman suite with **1,019 assertions**, including concurrency races, forged-webhook and OAuth attacks, and background-job retries, plus an end-to-end WebSocket check, all passing |
+| **Testing** | 676-request Postman suite with **1,120 assertions**, including concurrency races, forged-webhook and OAuth attacks, and background-job retries, plus an end-to-end WebSocket check, all passing |
 
 ---
 
@@ -75,7 +75,7 @@ Investment holdings are synced from a user's **Alpaca** brokerage account by a *
   - The access token lives **encrypted in a vault table**; the link row holds only a reference ([`services/vault.js`](services/vault.js)).
 - **Retries that know what's worth retrying:** rate limits and outages are retried with exponential backoff, up to 5 attempts. A refused token isn't retried at all; the link is marked `expired` for the user to reconnect.
 - **Idempotent and ordered:** one job id per link means asking again while a sync is queued returns the same job. A database advisory lock stops a manual sync and a scheduled one from overlapping. Every sync upserts the latest state, and positions the user has sold are removed.
-- **A scheduler** re-syncs every link that's due, every 15 minutes, with exactly one schedule no matter how many workers run.
+- **A scheduler** re-syncs every link that's due, every 15 minutes, with exactly one schedule no matter how many workers run. The same worker sends recurring invoices that are due (`RECURRING_BILLING_INTERVAL_MS`, also 15 minutes).
 
 ### Live updates that never lie
 When money moves, the customer's dashboard updates by itself and an alert lands in the bell, like a bank's debit and credit alerts ([`services/notifications.js`](services/notifications.js), [`services/realtime.js`](services/realtime.js), [`realtime/websocketServer.js`](realtime/websocketServer.js)).
@@ -93,6 +93,13 @@ A freelancer's clients mostly aren't on VergePay, so an invoice goes to a client
 - **Paid like a card top-up:** checkout is a pending payment from the processor's clearing account into the issuer's wallet. It settles only after Flutterwave's verify endpoint agrees on reference, currency and amount, and the invoice is marked paid in that same DB transaction. Webhook or redirect, whichever arrives first, does it once.
 - **Two payers at once:** if a second payment lands after the invoice is paid, the money is still credited (it really arrived) and the issuer is alerted to return it. Nothing is silently lost.
 - **Email that can't block a request:** invoices, reminders and receipts are saved exactly as sent (`email_log`), then delivered by the worker with retries. Any SMTP service works; development uses Ethereal's free fake inboxes, with a preview link per message.
+
+### Recurring billing that can't bill twice
+A plan invoices one client the same amount every week, month, quarter or year ([`services/recurring.js`](services/recurring.js)). Each invoice goes through the same path as a hand-made one: a number, a pay link and, if asked, an email.
+- **Dates that don't drift:** billing dates are always counted from the start date (`recurring_billing_date` in SQL), never by adding a month to the last one, so a plan started on 31 January bills on 28 February and then on 31 March again.
+- **Once per cycle:** a scheduled worker job bills every due plan, each in its own DB transaction with its row locked (`FOR UPDATE SKIP LOCKED`, so two workers share the work). A unique (plan, cycle) index on invoices means a retried or doubled run can't send a client the same invoice twice.
+- **Catching up, not piling on:** if the worker was down, each missed cycle is billed once it's back, due a few days from today rather than already overdue. Resuming a paused plan picks up at the next date, without billing the paused weeks.
+- **Says why, once:** if a plan can't bill (its wallet is frozen, its client archived), nothing is sent, the reason is saved on the plan and the owner is alerted once, not every run.
 
 ### Loan maths that adds up to the kobo
 Amortization ([`services/amortization.js`](services/amortization.js)) rounds the exact schedule's *cumulative* principal rather than the monthly payment. The naive approach (round the payment, carry the error) visibly drifts on long, small loans, and can pay a loan off early or produce negative principal. The final algorithm was property-tested across **21,681 amount/rate/term combinations**: principal always sums exactly, nothing is ever negative, and every installment is within 2 kobo of the level payment.
@@ -236,6 +243,10 @@ The full designs are in [`documentation/`](documentation/): the API design (`Fin
 | POST | `/v1/pay/:token/checkout` | **Public.** Starts Flutterwave checkout (card, bank transfer, USSD) for the full amount |
 | POST | `/v1/pay/:token/sync` | **Public.** After checkout: verifies with Flutterwave and settles. Safe to repeat |
 | POST | `/v1/pay/:token/wallet` | A signed-in VergePay customer pays from their wallet |
+| POST | `/v1/recurring-plans` | Bill a client the same amount weekly, monthly, quarterly or yearly, with payment terms. A plan that starts today sends its first invoice at once |
+| GET | `/v1/recurring-plans` | The customer's plans, filter by status, each with its invoice count, next billing date and last error |
+| GET / PATCH | `/v1/recurring-plans/:id` | One plan with the invoices it sent; edits (amount, description, terms, email) apply to invoices not yet sent |
+| POST | `/v1/recurring-plans/:id/pause` · `/resume` · `/cancel` | Pausing stops billing; resuming picks up at the next date without billing the paused time; cancelling is final |
 </details>
 
 <details>
@@ -293,13 +304,14 @@ An alert is written for every settled movement on a customer's wallet: a credit 
 
 ## Testing
 
-The whole API is exercised by a Postman suite, [`postman/vergepay-api.postman_collection.json`](postman/vergepay-api.postman_collection.json): **616 requests and 1,019 assertions**, grouped into 14 folders from sign-up to brokerage disconnection. It isn't just happy paths:
+The whole API is exercised by a Postman suite, [`postman/vergepay-api.postman_collection.json`](postman/vergepay-api.postman_collection.json): **676 requests and 1,120 assertions**, grouped into 15 folders from sign-up to brokerage disconnection. It isn't just happy paths:
 
 - **Every edge case:** validation, wrong owner, wrong state (`409`), insufficient funds, replayed keys, and retries after a simulated crash.
 - **Races:** simultaneous payments, refunds, repayments and sign-ins, fired at the same instant from test scripts.
 - **Attacks:** forged, unsigned and tampered webhooks; a client-supplied card token; replayed, forged and expired OAuth states; 2FA brute force; reused 2FA codes and refresh tokens.
 - **Provider behaviour on demand:** local stand-ins for Flutterwave and Alpaca ([`postman/flutterwave-stand-in.mjs`](postman/flutterwave-stand-in.mjs), [`postman/alpaca-stand-in.mjs`](postman/alpaca-stand-in.mjs)) produce declines, 3-D Secure, tampered amounts, bank deposits, rate limits, outages and revoked tokens.
 - **The background worker:** each brokerage sync is watched until it finishes, including retries with backoff, giving up after 5 attempts, and the scheduler.
+- **Recurring billing:** a plan that starts today billing at once, a run that finds nothing more to bill (no double billing), missed months caught up one invoice each, pausing and resuming without back-billing, edits, a plan that can't bill saying why exactly once, cancelling, and other customers' plans.
 - **Ledger invariants** checked across the database after each money-moving folder.
 - **Invoicing clients:** drafts and their rounding, sending and email (built but not sent: `EMAIL_TRANSPORT=json`), the reminder throttle and reminder counts, an invoice made overdue (dev backdate), what the public pay page hides, checkout paid, declined, tampered and paid twice at once, the webhook, cancelling, and paying a link from a wallet.
 - **Live updates:** Newman can't open sockets, so [`postman/realtime-check.mjs`](postman/realtime-check.mjs) (`npm run test:realtime`) connects real WebSockets for two customers and checks 17 things: who may connect, alerts and balance events arriving live on both sides and in a second tab, a rolled-back transfer sending nothing, one customer never seeing another's events, and refusal after sign-out.
@@ -334,7 +346,7 @@ npm install
 cp .env.example .env    # or create .env with the variables below
 npm run db:init         # applies every migration and seed; safe to re-run
 npm run start-dev       # the API on http://localhost:8000
-npm run worker          # the background worker (brokerage syncs), in another terminal
+npm run worker          # the background worker (brokerage syncs, email, recurring billing), in another terminal
 ```
 
 | Variable | Purpose |
@@ -353,6 +365,7 @@ npm run worker          # the background worker (brokerage syncs), in another te
 | `SMTP_URL` | Outgoing email, e.g. Brevo's free plan: `smtp://<login>:<smtp key>@smtp-relay.brevo.com:587`. Unset in development: Ethereal test inboxes |
 | `EMAIL_FROM` | The sender, e.g. `VergePay <invoices@yourdomain.com>` (must be a sender your SMTP service has verified) |
 | `WS_ALLOWED_ORIGINS` | Web app origins allowed to open the live-updates WebSocket, comma-separated (default: `CORS_ORIGIN`) |
+| `RECURRING_BILLING_INTERVAL_MS` | Optional. How often the worker looks for recurring invoices that are due (default 15 minutes) |
 | `VAULT_ENCRYPTION_KEY` | 64 hex characters; encrypts brokerage tokens in the vault |
 | `ALPACA_CLIENT_ID`, `ALPACA_CLIENT_SECRET` | From your Alpaca OAuth app (Connect → My Developed Apps) |
 | `ALPACA_REDIRECT_URI` | Must match the app's redirect URI, e.g. `http://localhost:8000/v1/brokerage-links/oauth/callback` |
@@ -370,7 +383,8 @@ vergePay_api/
 ├── services/        ledger.js (money posting), amortization.js, flutterwave.js, processorPayments.js,
 │                    alpaca.js, brokerageSync.js, queue.js (BullMQ), vault.js,
 │                    notifications.js (alerts), realtime.js (Redis pub/sub event bus),
-│                    invoices.js, invoiceEmails.js, email.js (SMTP via the worker)
+│                    invoices.js, invoiceEmails.js, email.js (SMTP via the worker),
+│                    recurring.js (recurring billing)
 ├── realtime/        the WebSocket server for live updates (/v1/ws)
 ├── worker.js        the background worker (npm run worker)
 ├── routes/          Express routers, one per resource
@@ -397,7 +411,7 @@ vergePay_api/
 
 ## Roadmap
 
-Built so far: auth and 2FA, accounts, the ledger and transfers, loans, invoices (to clients outside VergePay, with pay links and email) and refunds, cards and bank-transfer funding, investments with a background brokerage sync, and in-app alerts with live WebSocket updates. Next:
+Built so far: auth and 2FA, accounts, the ledger and transfers, loans, invoices (to clients outside VergePay, with pay links and email) and refunds, recurring billing, cards and bank-transfer funding, investments with a background brokerage sync, and in-app alerts with live WebSocket updates. Next:
 
 - [ ] Staff accounts with roles for the back office, replacing the internal key; KYC review and audit-log search
 - [ ] Automated reconciliation against Flutterwave settlement reports, and chargeback handling
