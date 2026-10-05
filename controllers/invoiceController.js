@@ -3,15 +3,23 @@ import { pool } from "../db/connectDB.js";
 import { withTransaction } from "../db/withTransaction.js";
 import {
   INVOICE_SELECT,
+  KYC_TO_INVOICE,
+  KYC_TO_PAY,
+  checkClient,
+  checkDueDate,
+  checkIssuerAccount,
+  emailIfWanted,
   emailInvoice,
   emailReceipt,
   loadInvoice,
   loadItems,
+  markSent,
   newPayToken,
   nextInvoiceNumber,
   paymentDescription,
   priceItems,
   replaceItems,
+  requireVerifiedKyc,
   settleInvoice,
   shapeInvoice,
 } from "../services/invoices.js";
@@ -134,14 +142,6 @@ function parseBody(schema, body, { allowEmpty = false } = {}) {
 
 const notFound = () => new NotFoundError({ message: "Invoice not found." });
 
-async function requireVerifiedKyc(db, userId, message) {
-  const result = await db.query(`SELECT kyc_status FROM users WHERE user_id = $1`, [userId]);
-  if (result.rows[0]?.kyc_status !== "verified") throw new KycRequiredError({ message });
-}
-
-const KYC_TO_INVOICE = "Identity verification is required before you can send invoices.";
-const KYC_TO_PAY = "Identity verification is required before you can move money.";
-
 // Only the issuer and the billed user can see an invoice; anyone else gets
 // 404. The billed user never sees drafts.
 async function findVisibleInvoice(db, userId, invoiceId, { withEmails = false } = {}) {
@@ -165,73 +165,6 @@ async function findVisibleInvoice(db, userId, invoiceId, { withEmails = false } 
     invoice.emails = emails.rows;
   }
   return invoice;
-}
-
-// The issuing wallet: the caller's own current/savings account, active.
-async function checkIssuerAccount(client, userId, accountId) {
-  const issuer = await client.query(
-    `SELECT a.account_type, a.account_status, a.currency_code,
-            (NOW() AT TIME ZONE u.timezone)::date::text AS today
-     FROM account a JOIN users u ON u.user_id = a.user_id
-     WHERE a.account_id = $1 AND a.user_id = $2 AND NOT a.is_system`,
-    [accountId, userId],
-  );
-  const from = issuer.rows[0];
-  if (!from) {
-    throw new ValidationError({ details: { issuer_account_id: ["Account not found."] } });
-  }
-  if (!["current", "savings"].includes(from.account_type)) {
-    throw new ValidationError({
-      details: { issuer_account_id: ["Invoices can only be paid into a current or savings account."] },
-    });
-  }
-  if (from.account_status !== "active") {
-    throw new ConflictError({ message: `The issuing account is ${from.account_status}.` });
-  }
-  return from;
-}
-
-async function checkClient(client, userId, clientId) {
-  const found = await client.query(
-    `SELECT client_id, name, email, archived_at FROM clients WHERE client_id = $1 AND user_id = $2`,
-    [clientId, userId],
-  );
-  const row = found.rows[0];
-  if (!row) throw new ValidationError({ details: { client_id: ["Client not found."] } });
-  if (row.archived_at) throw new ValidationError({ details: { client_id: ["This client is archived."] } });
-  return row;
-}
-
-function checkDueDate(dueDate, today) {
-  if (dueDate < today) throw new ValidationError({ details: { due_date: ["Can't be in the past."] } });
-}
-
-// Draft -> open: number, pay link, sent time. Inside the caller's DB
-// transaction, with the invoice row locked.
-async function markSent(client, invoiceId, userId) {
-  const number = await nextInvoiceNumber(client, userId);
-  await client.query(
-    `UPDATE invoices
-     SET invoice_status = 'open', invoice_number = $2, pay_token = COALESCE(pay_token, $3), sent_at = NOW()
-     WHERE invoice_id = $1`,
-    [invoiceId, number, newPayToken()],
-  );
-  await writeAudit(client, {
-    actorId: userId,
-    entityType: "invoice",
-    entityId: invoiceId,
-    action: "status_change",
-    before: { invoice_status: "draft" },
-    after: { invoice_status: "open", invoice_number: number },
-  });
-}
-
-// Emails a just-sent invoice to its client, if asked and possible.
-async function emailIfWanted(client, invoiceId, userId, sendEmail) {
-  if (sendEmail === false) return null;
-  const loaded = await loadInvoice(client, invoiceId, userId);
-  if (!loaded.invoice.client?.email) return null;
-  return emailInvoice(client, loaded.invoice, { kind: "invoice", userId });
 }
 
 // POST /v1/invoices

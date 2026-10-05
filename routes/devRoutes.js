@@ -1,6 +1,8 @@
 import express from "express";
 import {
   backdateInvoice,
+  backdateRecurringPlan,
+  runRecurringBilling,
   checkInvariants,
   expireOauthState,
   forgetIdempotencyKey,
@@ -23,6 +25,8 @@ devRouter.post("/accounts/:accountId/fund", verifyAccessToken, idempotency, fund
 devRouter.post("/test-user/reset", verifyAccessTokenAllowPending, resetTestUser);
 devRouter.delete("/idempotency-keys/:key", verifyAccessToken, forgetIdempotencyKey);
 devRouter.post("/invoices/:invoiceId/backdate", verifyAccessToken, backdateInvoice);
+devRouter.post("/recurring-plans/:planId/backdate", verifyAccessToken, backdateRecurringPlan);
+devRouter.post("/recurring/run", verifyAccessToken, runRecurringBilling);
 devRouter.get("/invariants", verifyAccessToken, checkInvariants);
 devRouter.post("/oauth-states/expire", verifyAccessToken, expireOauthState);
 devRouter.post("/brokerage/run-scheduler", verifyAccessToken, runBrokerageScheduler);
