@@ -807,6 +807,10 @@ const loans = [
     status: 200,
     checks: [["pending, no loan yet", 'j.status === "pending_review" && j.loan_id === null']],
   }),
+  req("List my applications", "GET", "/loans/applications", {
+    status: 200,
+    checks: [["the pending one first", 'j.data[0].application_id === v("applicationId") && j.data[0].status === "pending_review" && j.data[0].loan_id === null']],
+  }),
   req("Get an unknown application", "GET", "/loans/applications/00000000-0000-4000-8000-000000000000", { status: 404 }),
   req("Admin: queue without a key", "GET", "/admin/loans/applications", { status: 401 }),
   req("Admin: queue with a wrong key", "GET", "/admin/loans/applications", { internal: "wrong", status: 401 }),
@@ -987,6 +991,10 @@ const loans = [
   req("Rejected application shows the reason", "GET", "/loans/applications/{{applicationId}}", {
     status: 200,
     checks: [["reason, no loan", 'j.status === "rejected" && j.decision_reason === "Income not verified" && j.loan_id === null']],
+  }),
+  req("List my applications (newest first)", "GET", "/loans/applications", {
+    status: 200,
+    checks: [["rejected one first, then the approved one", 'j.data[0].application_id === v("applicationId") && j.data[0].status === "rejected" && j.data.some((a) => a.status === "approved" && a.loan_id)']],
   }),
   req("Admin: approve a rejected application", "POST", "/loans/applications/{{applicationId}}/approve", { internal: true, body: { interest_rate_bps: 1800 }, status: 409 }),
   invariants(),

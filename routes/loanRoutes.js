@@ -6,6 +6,7 @@ import {
   getLoan,
   getLoanApplication,
   getLoanSchedule,
+  listLoanApplications,
   listLoans,
   rejectLoanApplication,
   repayLoan,
@@ -20,6 +21,7 @@ import { moneyLimiter } from "../utils/rateLimiters.js";
 const loanRouter = express.Router();
 
 loanRouter.post("/applications", verifyAccessToken, optionalIdempotency, applyForLoan);
+loanRouter.get("/applications", verifyAccessToken, listLoanApplications);
 loanRouter.get("/applications/:applicationId", verifyAccessToken, getLoanApplication);
 loanRouter.post("/applications/:applicationId/approve", requireInternalCaller, approveLoanApplication);
 loanRouter.post("/applications/:applicationId/reject", requireInternalCaller, rejectLoanApplication);
