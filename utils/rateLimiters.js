@@ -130,6 +130,19 @@ export const passwordForgotLimiter = rateLimit({
   },
 });
 
+// Changing the email: each request checks the password and sends an email,
+// so it is limited per user (the confirm step has its own 5 tries a code).
+export const emailChangeLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  keyGenerator: (req) => req.user.sub,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req, res, next) => {
+    next(new TooManyRequestsError({ message: "Too many email change attempts. Please try again in a few minutes." }));
+  },
+});
+
 export const passwordResetLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 30,

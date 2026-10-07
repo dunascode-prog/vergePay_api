@@ -479,6 +479,18 @@ export async function expirePasswordResetCode(req, res) {
   return res.status(200).json({ expired: result.rowCount });
 }
 
+// POST /v1/dev/email-change/expire
+// Ages the caller's email change code by 20 minutes, like the reset helper.
+export async function expireEmailChangeCode(req, res) {
+  const result = await pool.query(
+    `UPDATE email_change_codes
+     SET expires_at = expires_at - interval '20 minutes', created_at = created_at - interval '20 minutes'
+     WHERE user_id = $1`,
+    [req.user.sub],
+  );
+  return res.status(200).json({ expired: result.rowCount });
+}
+
 // POST /v1/dev/loans/run-jobs
 // Runs the worker's loan job now (auto-debits, late fees, defaults), for the
 // caller's own loans only, so tests never touch anyone else's.

@@ -10,7 +10,7 @@ import { validationDetails } from "../utils/validation.js";
 
 // DATE is formatted in SQL so it is returned as "YYYY-MM-DD" rather than a
 // timezone-shifted JS Date.
-const PROFILE_COLUMNS = `
+export const PROFILE_COLUMNS = `
     user_id,
     username,
     email,
@@ -26,6 +26,10 @@ const PROFILE_COLUMNS = `
     timezone,
     kyc_status,
     two_factor_enabled,
+    -- an email change waiting for its code (controllers/emailChangeController.js)
+    (SELECT e.new_email FROM email_change_codes e
+     WHERE e.user_id = users.user_id AND e.used_at IS NULL
+       AND e.expires_at > NOW() AND e.attempts < 5) AS pending_email,
     created_at,
     updated_at`;
 

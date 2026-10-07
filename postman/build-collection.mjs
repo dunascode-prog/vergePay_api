@@ -3164,6 +3164,86 @@ const forgotPassword = [
 ];
 
 // ---------------------------------------------------------------------------
+// 19. Changing the email address (a fresh user)
+
+const ecNew = "{{ecUsername}}_new@vergepay.dev";
+const ecOld = "{{ecUsername}}@vergepay.dev";
+const ecStart = (name, body, status, checks = [], opts = {}) =>
+  req(name, "POST", "/users/me/email", { body: { new_email: ecNew, password: TEST_PASSWORD, ...body }, status, checks, ...opts });
+const ecReadCode = (name) =>
+  req(name, "GET", `/dev/emails/latest?to=${ecNew}&kind=email_change`, {
+    status: 200,
+    save: [["ecCode", "j.subject.slice(0, 6)"]],
+    checks: [["a 6-digit code to the NEW address", "/^\\d{6} is your VergePay email confirmation code$/.test(j.subject)"]],
+  });
+const ecWrong = 'pm.collectionVariables.set("ecWrong", String((Number(pm.collectionVariables.get("ecCode")) + 1) % 1000000).padStart(6, "0"));';
+const ecMe = (name, checks) => req(name, "GET", "/users/me", { status: 200, checks });
+
+const emailChange = [
+  ...newUser("ec", "the customer changing email (Chidi)"),
+  ecMe("No change in progress", [["pending_email is null", "j.pending_email === null"]]),
+
+  // refused before any email is sent
+  ecStart("Wrong password", { password: "Wrong#Password2026" }, 422, [["\"That password isn't right.\"", 'j.error.details.password[0] === "That password isn\'t right."']]),
+  ecStart("Not an email address", { new_email: "chidi" }, 422, [["new_email", "!!j.error.details.new_email"]]),
+  ecStart("No password", { password: undefined }, 422, [["password", "!!j.error.details.password"]], { body: { new_email: ecNew } }),
+  ecStart("Your own address", { new_email: ecOld }, 422, [["\"That's already your email address.\"", 'j.error.details.new_email[0] === "That\'s already your email address."']]),
+  ecStart("An address another account uses", { new_email: "{{adaEmail}}" }, 409, [["field new_email", 'j.error.field === "new_email"']]),
+  req("No code was sent for any of those", "GET", `/dev/emails/latest?to=${ecNew}`, { status: 404 }),
+
+  // the change
+  ecStart("Change to a new address", {}, 202, [["pending, with the address and expiry", `j.pending_email === pm.variables.replaceIn("${ecNew}") && !!j.expires_at`]]),
+  ecMe("The email hasn't changed yet; the change is pending", [["old email, pending new", `j.email === pm.variables.replaceIn("${ecOld}") && j.pending_email === pm.variables.replaceIn("${ecNew}")`]]),
+  ecStart("Ask again straight away", {}, 409, [["wait a minute", 'errorMessage.startsWith("We\'ve just sent a code")']]),
+  ecReadCode("Read the code sent to the new address"),
+  req("Wrong code: 4 tries left", "POST", "/users/me/email/confirm", {
+    pre: [ecWrong],
+    body: { code: "{{ecWrong}}" },
+    status: 422,
+    checks: [["4 tries left", 'j.error.details.code[0] === "That code isn\'t right. You have 4 tries left."']],
+  }),
+  req("Not 6 digits", "POST", "/users/me/email/confirm", { body: { code: "12" }, status: 422, checks: [["code", "!!j.error.details.code"]] }),
+  req("Confirm with the right code", "POST", "/users/me/email/confirm", {
+    body: { code: "{{ecCode}}" },
+    status: 200,
+    checks: [["the email is the new address, nothing pending", `j.email === pm.variables.replaceIn("${ecNew}") && j.pending_email === null`]],
+  }),
+  req("The old address is told, with the new one masked", "GET", `/dev/emails/latest?to=${ecOld}&kind=email_changed`, {
+    status: 200,
+    checks: [
+      ["\"Your VergePay email address was changed\"", 'j.subject === "Your VergePay email address was changed"'],
+      ["the new address is masked", 'j.text_body.includes("•") && !j.text_body.includes(pm.variables.replaceIn("{{ecUsername}}_new"))'],
+    ],
+  }),
+  req("Still signed in", "GET", "/users/me", { status: 200 }),
+  req("The code can't be used twice", "POST", "/users/me/email/confirm", { body: { code: "{{ecCode}}" }, status: 422, checks: [["expired or invalid", 'errorMessage.startsWith("That code has expired")']] }),
+  req("The old address no longer signs in", "POST", "/auth/signin", { body: { email: ecOld, password: TEST_PASSWORD }, status: 401 }),
+  req("The new address signs in", "POST", "/auth/signin", {
+    body: { email: ecNew, password: TEST_PASSWORD },
+    status: 200,
+    checks: [["session cookies set", 'pm.cookies.has("access_token") && pm.cookies.has("refresh_token")']],
+  }),
+
+  // expiry and cancelling (back to the original address)
+  ecStart("Change back: start", { new_email: ecOld }, 202),
+  req("Dev: let 20 minutes pass", "POST", "/dev/email-change/expire", { status: 200, checks: [["aged", "j.expired >= 1"]] }),
+  ecMe("An expired change isn't pending", [["pending_email is null", "j.pending_email === null"]]),
+  req("The expired code fails", "POST", "/users/me/email/confirm", { body: { code: "000000" }, status: 422, checks: [["expired or invalid", 'errorMessage.startsWith("That code has expired")']] }),
+  ecStart("Start again", { new_email: ecOld }, 202),
+  req("Cancel the change", "DELETE", "/users/me/email", { status: 200, checks: [["cancelled", "j.cancelled === true"]] }),
+  ecMe("Nothing pending after cancelling", [["pending_email is null", "j.pending_email === null"]]),
+  req("Cancel again: nothing to cancel", "DELETE", "/users/me/email", { status: 200, checks: [["not cancelled", "j.cancelled === false"]] }),
+
+  // with 2FA on, a recent code is needed as well
+  ...enableTwoFactor(),
+  dropTwoFactorStamp(),
+  ecStart("2FA on, no recent code: refused", { new_email: ecOld }, 403, [["TWO_FACTOR_REQUIRED", 'errorCode === "TWO_FACTOR_REQUIRED"']]),
+  reverify("Confirms a code, as the profile page asks for one."),
+  ecStart("With a recent code: the code is sent", { new_email: ecOld }, 202),
+  req("Cancel it (leave the user as it is)", "DELETE", "/users/me/email", { status: 200 }),
+];
+
+// ---------------------------------------------------------------------------
 // 17. Loan repayment rules
 
 const lrApply = (accountVar, extra = {}) => ({
@@ -3460,7 +3540,8 @@ const main = collection(
     folder("16. Withdrawals", "Withdrawing to a Nigerian bank account through Flutterwave Transfers (the stand-in): banks, name enquiry and saved accounts, the fee split (half each, the customer's rounded down), refusals before any money moves, the wallet debited at once, idempotent retries including a lost reply, a webhook that isn't trusted, success, a bank failure refunded with its reason, Flutterwave refusing or unreachable, the daily limit (and a concurrent race on it), removing a bank account, and other users. A fresh customer.", withdrawals),
     folder("17. Loan repayment rules", "Auto-debit on the due date (collected; or not, with one alert a day), the late fee after 3 days' grace (charged once, ₦500 minimum), paying any amount (fees first, then the oldest installment, then the next), the payoff quote and the most you can pay, default at 90 days overdue (no new loans) and back to active once caught up, paying off, and paying ahead on a loan with interest (the last installment's principal paid down and part of its interest waived). A fresh borrower; the loan job is run through /dev/loans/run-jobs.", loanRules),
     folder("18. Forgot password", "Resetting a forgotten password with an emailed 6-digit code: the same answer whether or not the account exists, one email a minute at most, 5 tries per code, the password rules, expiry after 15 minutes, a code that works once, and every session ended by the reset. A fresh customer; the code is read from the email log through /dev/emails/latest.", forgotPassword),
-    folder("19. Wrap-up", "The 2FA brute-force limit, resetting the test users, and logout.", wrapUp),
+    folder("19. Changing email", "Changing the email address: the password (and a recent 2FA code when 2FA is on) checked before anything is sent, a code to the new address, the change pending until it's confirmed, 5 tries, the old address told with the new one masked, still signed in, signing in with the new address only, expiry and cancelling. A fresh customer.", emailChange),
+    folder("20. Wrap-up", "The 2FA brute-force limit, resetting the test users, and logout.", wrapUp),
   ],
 );
 
