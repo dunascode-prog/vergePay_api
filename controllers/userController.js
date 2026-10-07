@@ -7,6 +7,7 @@ import {
   ValidationError,
 } from "../utils/errorStr.js";
 import { validationDetails } from "../utils/validation.js";
+import { withPhotoUrl } from "../services/profilePhotos.js";
 
 // DATE is formatted in SQL so it is returned as "YYYY-MM-DD" rather than a
 // timezone-shifted JS Date.
@@ -26,6 +27,8 @@ export const PROFILE_COLUMNS = `
     timezone,
     kyc_status,
     two_factor_enabled,
+    -- the S3 key; responses swap it for a signed photo_url (withPhotoUrl)
+    photo_key,
     -- an email change waiting for its code (controllers/emailChangeController.js)
     (SELECT e.new_email FROM email_change_codes e
      WHERE e.user_id = users.user_id AND e.used_at IS NULL
@@ -87,7 +90,7 @@ export async function getMe(req, res) {
     throw new NotFoundError({ message: "User not found." });
   }
 
-  return res.status(200).json(result.rows[0]);
+  return res.status(200).json(await withPhotoUrl(result.rows[0]));
 }
 
 export async function updateMe(req, res) {
@@ -133,7 +136,7 @@ export async function updateMe(req, res) {
       `UPDATE users SET ${setClause} WHERE user_id = $1 RETURNING ${PROFILE_COLUMNS}`,
       [req.user.sub, ...fields.map((field) => updates[field])],
     );
-    return res.status(200).json(result.rows[0]);
+    return res.status(200).json(await withPhotoUrl(result.rows[0]));
   } catch (err) {
     const field = err.code === "23503" && FK_FIELDS[err.constraint];
     if (field) {

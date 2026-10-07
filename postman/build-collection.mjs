@@ -100,6 +100,8 @@ const expected = []; // { collection, folder, rows: [...] }
 //   totp         true = generate {{totpCode}} first (2FA steps)
 //   rawUrl       a whole URL from a variable (e.g. "{{authorizationUrl}}") instead of base + path
 //   noRedirect   don't follow redirects, so the redirect itself can be checked
+//   file         a file to send as the body (path from the repo root, e.g. postman/fixtures/photo.jpg)
+//   contentType  the Content-Type for raw or file bodies (default application/json for raw)
 //   body, raw, headers, pre, tests, description, base
 function req(name, method, path, opts = {}) {
   const {
@@ -118,11 +120,16 @@ function req(name, method, path, opts = {}) {
     base = "{{baseUrl}}",
     rawUrl,
     noRedirect,
+    file,
+    contentType,
   } = opts;
   if (status === undefined) throw new Error(`${name}: every request needs an expected status`);
 
   const preScript = [...pre];
-  const header = [...(body || raw ? [JSON_HEADER] : []), ...headers];
+  const header = [
+    ...(contentType ? [{ key: "Content-Type", value: contentType }] : body || raw ? [JSON_HEADER] : []),
+    ...headers,
+  ];
   if (idem) {
     const [mode, variable = "idempotencyKey"] = idem.split(":");
     if (mode === "new") preScript.unshift(`pm.collectionVariables.set(${JSON.stringify(variable)}, pm.variables.replaceIn("{{$guid}}"));`);
@@ -147,6 +154,7 @@ function req(name, method, path, opts = {}) {
   const request = { method, header, url: rawUrl ?? buildUrl(base, path) };
   const bodyText = raw ?? (body !== undefined ? rawBody(body) : undefined);
   if (bodyText !== undefined) request.body = { mode: "raw", raw: bodyText, options: { raw: { language: "json" } } };
+  if (file) request.body = { mode: "file", file: { src: file } };
 
   counter += 1;
   const checkLabels = [...checks.map(([label]) => label), ...(opts.extraCheckLabels ?? [])];
@@ -3244,6 +3252,69 @@ const emailChange = [
 ];
 
 // ---------------------------------------------------------------------------
+// 20. Profile photo (a fresh user; the S3 stand-in on :9997)
+
+const s3Objects = (name, checks) =>
+  req(name, "GET", "/_objects?prefix=avatars/{{phUserId}}/", { base: "{{s3StandInUrl}}", status: 200, checks });
+const photoPut = (name, file, contentType, status, checks = [], opts = {}) =>
+  req(name, "PUT", "/users/me/photo", { file, contentType, status, checks, ...opts });
+
+const profilePhoto = [
+  ...newUser("ph", "the customer with a photo (Amaka)"),
+  req("No photo yet", "GET", "/users/me", {
+    status: 200,
+    save: [["phUserId", "j.user_id"]],
+    checks: [["photo_url is null, and the S3 key is never shown", "j.photo_url === null && !(\"photo_key\" in j)"]],
+  }),
+
+  // refused, with nothing stored
+  photoPut("A GIF is refused", "postman/fixtures/photo.gif", "image/gif", 415, [["UNSUPPORTED_MEDIA_TYPE", 'errorCode === "UNSUPPORTED_MEDIA_TYPE"']]),
+  photoPut("A text file named .png is refused (the bytes are checked)", "postman/fixtures/not-a-photo.png", "image/png", 415, [["\"Upload a JPG or PNG photo.\"", 'errorMessage === "Upload a JPG or PNG photo."']]),
+  photoPut("Too small (60 × 60)", "postman/fixtures/tiny.png", "image/png", 400, [["at least 100 × 100", 'errorMessage.includes("at least 100 × 100")']]),
+  req("JSON instead of a photo is refused", "PUT", "/users/me/photo", { body: { photo: "x" }, status: 415 }),
+  req("Over 2 MB is refused", "PUT", "/users/me/photo", {
+    pre: ['pm.collectionVariables.set("phBig", "x".repeat(2 * 1024 * 1024 + 10));'],
+    raw: "{{phBig}}",
+    contentType: "image/jpeg",
+    status: 413,
+    checks: [["PAYLOAD_TOO_LARGE", 'errorCode === "PAYLOAD_TOO_LARGE"']],
+    tests: ['pm.collectionVariables.unset("phBig");'],
+  }),
+  s3Objects("Nothing was stored", [["no objects", "j.length === 0"]]),
+
+  // a JPEG with camera metadata
+  photoPut("Upload a JPG (900 × 600, with camera metadata)", "postman/fixtures/photo.jpg", "image/jpeg", 200, [
+    ["photo_url is a signed link to the private bucket", 'j.photo_url.includes("/vergepay-photos-test/avatars/" + v("phUserId") + "/") && j.photo_url.includes("X-Amz-Signature=")'],
+  ], { save: [["phPhotoUrl", "j.photo_url"]] }),
+  req("The stored photo: a 512 × 512 JPEG with the metadata gone", "GET", "", {
+    rawUrl: "{{phPhotoUrl}}",
+    status: 200,
+    checks: [
+      ["image/jpeg, cached privately", 'pm.response.headers.get("Content-Type") === "image/jpeg" && pm.response.headers.get("Cache-Control").startsWith("private")'],
+      ["no camera metadata left", '!pm.response.text().includes("SECRET-CAMERA-OWNER")'],
+      ["512 × 512", '(() => { const b = pm.response.stream; for (let i = 2; i < b.length - 8; i++) { if (b[i] === 0xff && (b[i + 1] === 0xc0 || b[i + 1] === 0xc2)) return (b[i + 5] << 8 | b[i + 6]) === 512 && (b[i + 7] << 8 | b[i + 8]) === 512; } return false; })()'],
+    ],
+  }),
+  req("The profile gives the same link all hour (so it caches)", "GET", "/users/me", { status: 200, checks: [["same photo_url", 'j.photo_url === v("phPhotoUrl")']] }),
+  s3Objects("One photo stored", [["one object", "j.length === 1"]], ),
+
+  // replaced by a PNG
+  photoPut("Replace it with a PNG (transparent background)", "postman/fixtures/photo.png", "image/png", 200, [
+    ["a new link", 'j.photo_url !== v("phPhotoUrl")'],
+  ], { save: [["phPhotoUrl2", "j.photo_url"]] }),
+  req("The new photo is a JPEG too", "GET", "", { rawUrl: "{{phPhotoUrl2}}", status: 200, checks: [["image/jpeg", 'pm.response.headers.get("Content-Type") === "image/jpeg"']] }),
+  req("The old photo is deleted from the bucket", "GET", "", { rawUrl: "{{phPhotoUrl}}", status: 404 }),
+  s3Objects("Still one photo stored", [["one object", "j.length === 1"]]),
+  photoPut("A refused upload leaves the photo as it was", "postman/fixtures/tiny.png", "image/png", 400),
+  req("Photo unchanged", "GET", "/users/me", { status: 200, checks: [["same photo", 'j.photo_url === v("phPhotoUrl2")']] }),
+
+  // removing it
+  req("Remove the photo", "DELETE", "/users/me/photo", { status: 200, checks: [["photo_url is null", "j.photo_url === null"]] }),
+  s3Objects("The bucket is empty again", [["no objects", "j.length === 0"]]),
+  req("Remove again: still fine", "DELETE", "/users/me/photo", { status: 200, checks: [["photo_url is null", "j.photo_url === null"]] }),
+];
+
+// ---------------------------------------------------------------------------
 // 17. Loan repayment rules
 
 const lrApply = (accountVar, extra = {}) => ({
@@ -3498,6 +3569,7 @@ const baseVariables = [
   { key: "toluEmail", value: "tolu.login@vergepay.dev" },
   { key: "toluPassword", value: "Signin#Tolu2026" },
   { key: "adaEmail", value: "ada.login@vergepay.dev" },
+  { key: "s3StandInUrl", value: "http://localhost:9997" },
   { key: "adaPassword", value: "Signin$Ada7741" },
   { key: "internalApiKey", value: "", description: "INTERNAL_API_KEY from .env (the back-office key). npm run test:postman fills it in." },
   { key: "flwSecretHash", value: "stand-in-secret-hash", description: "The webhook secret hash. Matches npm run start:with-stand-in." },
@@ -3541,7 +3613,8 @@ const main = collection(
     folder("17. Loan repayment rules", "Auto-debit on the due date (collected; or not, with one alert a day), the late fee after 3 days' grace (charged once, ₦500 minimum), paying any amount (fees first, then the oldest installment, then the next), the payoff quote and the most you can pay, default at 90 days overdue (no new loans) and back to active once caught up, paying off, and paying ahead on a loan with interest (the last installment's principal paid down and part of its interest waived). A fresh borrower; the loan job is run through /dev/loans/run-jobs.", loanRules),
     folder("18. Forgot password", "Resetting a forgotten password with an emailed 6-digit code: the same answer whether or not the account exists, one email a minute at most, 5 tries per code, the password rules, expiry after 15 minutes, a code that works once, and every session ended by the reset. A fresh customer; the code is read from the email log through /dev/emails/latest.", forgotPassword),
     folder("19. Changing email", "Changing the email address: the password (and a recent 2FA code when 2FA is on) checked before anything is sent, a code to the new address, the change pending until it's confirmed, 5 tries, the old address told with the new one masked, still signed in, signing in with the new address only, expiry and cancelling. A fresh customer.", emailChange),
-    folder("20. Wrap-up", "The 2FA brute-force limit, resetting the test users, and logout.", wrapUp),
+    folder("20. Profile photo", "Uploading a profile photo to a private S3 bucket (the stand-in): JPG or PNG only, checked by its bytes, 2 MB at most, at least 100 × 100; stored as a 512 × 512 JPEG with the metadata stripped; a signed link that stays the same all hour; replacing deletes the old file; removing it. A fresh customer.", profilePhoto),
+    folder("21. Wrap-up", "The 2FA brute-force limit, resetting the test users, and logout.", wrapUp),
   ],
 );
 

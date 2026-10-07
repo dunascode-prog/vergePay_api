@@ -10,6 +10,18 @@ export class BadRequestError extends AppError {
     });
   }
 }
+// An upload that's too big or not an accepted type.
+export class PayloadTooLargeError extends AppError {
+  constructor({ message = "That file is too large." } = {}) {
+    super({ message, statusCode: 413, code: "PAYLOAD_TOO_LARGE" });
+  }
+}
+export class UnsupportedMediaTypeError extends AppError {
+  constructor({ message = "That file type isn't supported." } = {}) {
+    super({ message, statusCode: 415, code: "UNSUPPORTED_MEDIA_TYPE" });
+  }
+}
+
 export class UnauthorizedError extends AppError {
   constructor({ message = "Unauthorized" } = {}) {
     super({ message: message, statusCode: 401, code: "UNAUTHORIZED" });

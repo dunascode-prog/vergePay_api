@@ -37,5 +37,11 @@ process.env.BROKERAGE_RETURN_URL =
 // re-syncs getting in the way of a run
 process.env.BROKERAGE_RETRY_DELAY_MS = "300";
 process.env.BROKERAGE_SYNC_INTERVAL_MS = String(60 * 60 * 1000);
+// Profile photos go to the S3 stand-in (postman/s3-stand-in.mjs, :9997)
+process.env.S3_ENDPOINT = `http://localhost:${process.env.S3_STAND_IN_PORT || 9997}`;
+process.env.S3_PHOTO_BUCKET = "vergepay-photos-test";
+process.env.AWS_REGION = "eu-west-2";
+process.env.AWS_ACCESS_KEY_ID = "stand-in";
+process.env.AWS_SECRET_ACCESS_KEY = "stand-in";
 // emails are built and logged but never sent (email_log shows them as sent)
 process.env.EMAIL_TRANSPORT = "json";

@@ -152,6 +152,16 @@ const env = {
     // how often the worker re-checks withdrawals Flutterwave hasn't confirmed
     syncIntervalMs: parseInt(process.env.WITHDRAWAL_SYNC_INTERVAL_MS, 10) || 5 * 60 * 1000,
   },
+  // Profile photos (services/profilePhotos.js), in a PRIVATE S3 bucket:
+  // only the owner gets a short-lived signed link. Off until S3_PHOTO_BUCKET
+  // is set. Credentials come from AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
+  // (or ~/.aws). S3_ENDPOINT is only for a local stand-in.
+  photos: {
+    bucket: process.env.S3_PHOTO_BUCKET,
+    region: process.env.AWS_REGION || "eu-west-2",
+    endpoint: process.env.S3_ENDPOINT,
+    maxBytes: 2 * 1024 * 1024,
+  },
   // Flutterwave (services/flutterwave.js). Card and bank-transfer funding
   // are off until FLW_SECRET_KEY is set.
   flutterwave: {

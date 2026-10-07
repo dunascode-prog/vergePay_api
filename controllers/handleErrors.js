@@ -1,11 +1,15 @@
 import logger from "../logger.js";
-import { BadRequestError } from "../utils/errorStr.js";
+import { BadRequestError, PayloadTooLargeError } from "../utils/errorStr.js";
 
 export const handleErrors = (err, req, res, next) => {
   // A body that isn't valid JSON is the client's mistake, not a server
   // failure (express.json raises it before any handler runs).
   if (err.type === "entity.parse.failed") {
     err = new BadRequestError({ message: "The request body isn't valid JSON." });
+  }
+  // over a body parser's limit (a photo over 2 MB, say)
+  if (err.type === "entity.too.large") {
+    err = new PayloadTooLargeError({ message: "That file is too large." });
   }
   logger.error({
     requestId: req.requestId,

@@ -12,6 +12,7 @@
     "postman:build": "node postman/build-collection.mjs",
     "flw:stand-in": "node postman/flutterwave-stand-in.mjs",
     "alpaca:stand-in": "node postman/alpaca-stand-in.mjs",
+    "s3:stand-in": "node postman/s3-stand-in.mjs",
     "start:with-stand-in": "node postman/start-api-with-stand-in.mjs",
     "worker:with-stand-in": "node postman/start-worker-with-stand-in.mjs",
     "start:flw-sandbox": "node postman/start-api-for-sandbox.mjs",
@@ -38,12 +39,15 @@
     "zod": "^4.4.3"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1147.0",
+    "@aws-sdk/s3-request-presigner": "^3.1147.0",
     "@hookform/resolvers": "^5.4.0",
     "bullmq": "^6.3.9",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
     "ioredis": "^5.11.1",
     "nodemailer": "^6.10.1",
+    "sharp": "^0.35.5",
     "ws": "^8.22.0"
   }
 }
