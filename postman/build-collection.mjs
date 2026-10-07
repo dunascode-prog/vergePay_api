@@ -775,6 +775,7 @@ const loanApplication = {
   currency_code: "NGN",
   term_months: 3,
   purpose: "Laptop for freelance work",
+  auto_debit_consent: true,
 };
 
 const loans = [
@@ -783,6 +784,11 @@ const loans = [
   openAccount("Open loan account (personal wallet)", "loanAccountId"),
   openAccount("Open the repaying account (business wallet)", "receiverAccountId", { purpose: "business" }),
   req("Apply - term of 0 months", "POST", "/loans/applications", { body: { ...loanApplication, term_months: 0 }, status: 422 }),
+  req("Apply - without agreeing to automatic repayments", "POST", "/loans/applications", {
+    body: { ...loanApplication, auto_debit_consent: false },
+    status: 422,
+    checks: [["consent flagged", "Boolean(j.error.details.auto_debit_consent)"]],
+  }),
   req("Apply - currency doesn't match the account", "POST", "/loans/applications", { body: { ...loanApplication, currency_code: "USD" }, status: 422 }),
   req("Apply - unknown account", "POST", "/loans/applications", {
     body: { ...loanApplication, account_id: "00000000-0000-4000-8000-000000000000" },
@@ -910,11 +916,11 @@ const loans = [
     status: 409,
     checks: [["mentions the loan", "/loan/.test(errorMessage)"]],
   }),
-  req("Repay - wrong amount", "POST", "/loans/{{loanId}}/repayments", {
+  req("Repay - under the ₦100 minimum", "POST", "/loans/{{loanId}}/repayments", {
     idem: "new",
     body: { source_account_id: "{{receiverAccountId}}", amount_minor: 1000 },
     status: 422,
-    checks: [["says what's due", "Boolean(j.error.details.amount_minor)"]],
+    checks: [["amount flagged", "Boolean(j.error.details.amount_minor)"]],
   }),
   req("Repay - unknown source account", "POST", "/loans/{{loanId}}/repayments", {
     idem: "new",
@@ -926,7 +932,8 @@ const loans = [
     body: { source_account_id: "{{receiverAccountId}}", amount_minor: "{{installment1Amount}}" },
     status: 201,
     save: [["repay1Body", "JSON.stringify(j)"]],
-    checks: [["installment 1 paid, balance lowered", 'j.schedule_installment_marked_paid === 1 && j.new_balance_remaining_minor === n("loanTotal") - n("installment1Amount")']],
+    description: "Installment 1 isn't due for a month: money paid early counts as the next installment first.",
+    checks: [["installment 1 paid, balance lowered", 'j.schedule_installment_marked_paid === 1 && j.new_balance_remaining_minor === n("loanTotal") - n("installment1Amount") && j.installments_completed.join() === "1"']],
   }),
   forgetKey("repayKey"),
   req("Repay - retry after the lost record", "POST", "/loans/{{loanId}}/repayments", {
@@ -940,29 +947,25 @@ const loans = [
     body: { source_account_id: "{{loanAccountId}}", amount_minor: "{{installment1Amount}}" },
     status: 422,
   }),
-  concurrently("Concurrent: 4 repayments at once (2 installments left)", {
+  concurrently("Concurrent: 4 repayments of installment 2 at once", {
     count: 4,
     method: "POST",
     path: "/loans/{{loanId}}/repayments",
     bodyExpr: '{ source_account_id: pm.collectionVariables.get("receiverAccountId"), amount_minor: Number(pm.collectionVariables.get("installment2Amount")) }',
-    expectExpr: `${count(null, 201)} === (pm.collectionVariables.get("installment2Amount") === pm.collectionVariables.get("installment3Amount") ? 2 : 1) && codes.every((c) => [201, 409, 422].includes(c))`,
-    label: "the loan row lock lets through only as many as there are matching installments",
-    description: "Four clients pay the next installment at the same moment. The loan row is locked, so they queue: the first pays #2, and the next can only succeed if #3 is the same amount. The rest get 409 (repaid) or 422 (wrong amount).",
+    expectExpr: `${count(null, 201)} === 1 && ${count(null, 422)} === 3`,
+    label: "one pays installment 2; the rest are more than the loan needs now",
+    description: "The loan row is locked, so they queue. The first pays installment 2 early. After that, paying the loan off costs only the principal of installment 3 (its interest isn't owed yet), which is less than an installment, so the other three are refused.",
   }),
-  req("Pay whatever is left", "GET", "/loans/{{loanId}}", {
+  req("Payoff quote", "GET", "/loans/{{loanId}}/payoff", {
     status: 200,
-    description: "If installment 3 differed by a kobo from installment 2, the concurrent round left it unpaid; this pays it.",
-    extraCheckLabels: ["last installment paid (here, or already in the concurrent round)"],
-    tests: [
-      'if (j.loan_status !== "active") pm.test("last installment paid (already in the concurrent round)", () => pm.expect(j.loan_status).to.eql("repaid"));',
-      'if (j.loan_status === "active") {',
-      "  pm.sendRequest({",
-      '    url: pm.variables.replaceIn("{{baseUrl}}/loans/{{loanId}}/repayments"), method: "POST",',
-      '    header: { "Content-Type": "application/json", "Idempotency-Key": pm.variables.replaceIn("{{$guid}}") },',
-      '    body: { mode: "raw", raw: JSON.stringify({ source_account_id: v("receiverAccountId"), amount_minor: j.next_installment.installment_amount_minor }) },',
-      '  }, (err, res) => pm.test("last installment paid", () => pm.expect(res.code).to.eql(201)));',
-      "}",
-    ],
+    save: [["payoffAmount", "j.total_minor"]],
+    checks: [["just installment 3's principal: its interest is waived", 'j.total_minor > 0 && j.total_minor < n("installment3Amount") && j.interest_to_date_minor === 0 && j.interest_saved_minor > 0 && j.overdue_minor === 0']],
+  }),
+  req("Pay it off", "POST", "/loans/{{loanId}}/payoff", {
+    idem: "new",
+    body: { source_account_id: "{{receiverAccountId}}" },
+    status: 201,
+    checks: [["the quoted amount, the rest of the interest waived", 'j.kind === "payoff" && j.amount_minor === n("payoffAmount") && j.applied.interest_waived_minor > 0 && j.new_balance_remaining_minor === 0 && j.loan_status === "repaid"']],
   }),
   req("Loan is repaid", "GET", "/loans/{{loanId}}", {
     status: 200,
@@ -3038,6 +3041,170 @@ const withdrawals = [
   invariants(),
 ];
 
+// ---------------------------------------------------------------------------
+// 17. Loan repayment rules
+
+const lrApply = (accountVar, extra = {}) => ({
+  account_id: `{{${accountVar}}}`,
+  loan_type: "personal",
+  requested_amount_minor: 4000000,
+  currency_code: "NGN",
+  term_months: 4,
+  auto_debit_consent: true,
+  ...extra,
+});
+const runLoanJobs = (name, checks = []) =>
+  req(name, "POST", "/dev/loans/run-jobs", {
+    status: 200,
+    description: "Development only. Runs the worker's loan job now (auto-debits, late fees, defaults) for this customer's loans.",
+    checks,
+  });
+const lrLoan = (name, checks, save = []) => req(name, "GET", "/loans/{{lrLoanId}}", { status: 200, checks, save });
+const lrPay = (name, amount, opts = {}) =>
+  req(name, "POST", "/loans/{{lrLoanId}}/repayments", { idem: "new", body: { source_account_id: "{{lrBizId}}", amount_minor: amount }, ...opts });
+// the days to move an installment back so it's due `overdueBy` days ago
+const daysToBeDue = (n, variable, overdueBy) =>
+  req(`Days until installment ${n} is due`, "GET", "/loans/{{lrLoanId}}/schedule", {
+    status: 200,
+    pre: ['pm.collectionVariables.set("lrToday", new Date().toLocaleDateString("en-CA", { timeZone: "Africa/Lagos" }));'],
+    save: [[variable, `String(Math.round((Date.parse(j.data[${n - 1}].due_date) - Date.parse(v("lrToday"))) / 86400000) + ${overdueBy})`]],
+  });
+
+const loanRules = [
+  ...newUser("lr", "the borrower (Lola)"),
+  kycVerify(),
+  openAccount("Lola: personal wallet (the loan's)", "lrWalletId"),
+  openAccount("Lola: business wallet", "lrBizId", { purpose: "business" }),
+  req("Apply: ₦40,000 over 4 months, agreeing to automatic repayments", "POST", "/loans/applications", {
+    body: lrApply("lrWalletId"),
+    status: 202,
+    save: [["lrAppId", "j.application_id"]],
+  }),
+  req("Dev: approve at 0% and pay out", "POST", "/dev/loans/applications/{{lrAppId}}/decide", {
+    body: { decision: "approve", interest_rate_bps: 0 },
+    status: 201,
+    save: [["lrLoanId", "j.loan_id"]],
+    description: "0% keeps the numbers round: four installments of ₦10,000.",
+  }),
+  lrLoan("Auto-debit is on, nothing due yet", [
+    ["auto_debit, 4 installments, nothing due", "j.auto_debit === true && j.installments_total === 4 && j.amount_due_now_minor === 0 && j.days_overdue === null && j.next_installment.remaining_minor === 1000000"],
+  ]),
+
+  // auto-debit on the due date
+  req("Dev: installment 1 due yesterday", "POST", "/dev/loans/{{lrLoanId}}/backdate", { body: { days: 32, installment_number: 1 }, status: 200 }),
+  runLoanJobs("Run the loan job"),
+  lrLoan("Installment 1 collected from the wallet", [["paid automatically", "j.installments_paid === 1 && j.balance_remaining_minor === 3000000 && j.amount_due_now_minor === 0"]]),
+  balanceIs("₦10,000 taken from the loan's wallet", "lrWalletId", "3000000"),
+  newestAlert("The debit alert says it was automatic", [["\"Loan repayment of ₦10,000.00\", automatic", 'j.data[0].title === "Loan repayment of ₦10,000.00" && j.data[0].body.includes("Automatic")']]),
+
+  // a collection that can't be made
+  req("Move the money out of the loan's wallet", "POST", "/transactions", {
+    idem: "new",
+    body: { sender_account_id: "{{lrWalletId}}", receiver_account_id: "{{lrBizId}}", amount_minor: 3000000, currency_code: "NGN" },
+    status: 201,
+  }),
+  req("Turn auto-debit off", "PATCH", "/loans/{{lrLoanId}}/auto-debit", { body: { enabled: false }, status: 200, checks: [["off", "j.auto_debit === false"]] }),
+  req("Turn it back on (today's attempt starts afresh)", "PATCH", "/loans/{{lrLoanId}}/auto-debit", { body: { enabled: true }, status: 200, checks: [["on", "j.auto_debit === true"]] }),
+  daysToBeDue(2, "lrShift2Amount", 1),
+  req("Dev: installment 2 due yesterday", "POST", "/dev/loans/{{lrLoanId}}/backdate", { body: { days: "{{lrShift2Amount}}", installment_number: 2 }, status: 200 }),
+  runLoanJobs("Run the loan job (the wallet is empty)"),
+  newestAlert("Alert: couldn't collect", [["\"We couldn't collect your loan payment of ₦10,000.00\"", 'j.data[0].title === "We couldn\'t collect your loan payment of ₦10,000.00" && j.data[0].kind === "loan_payment_missed"']], [["lrMissedAlertId", "j.data[0].notification_id"]]),
+  lrLoan("Due now, a day overdue", [["₦10,000 due, 1 day overdue", "j.amount_due_now_minor === 1000000 && j.days_overdue === 1 && j.loan_status === \"active\""]]),
+  runLoanJobs("Run the loan job again the same day"),
+  newestAlert("No second attempt, no second alert today", [["same newest alert", 'j.data[0].notification_id === v("lrMissedAlertId")']]),
+
+  // the late fee after the grace period
+  req("Dev: 3 more days (4 days overdue)", "POST", "/dev/loans/{{lrLoanId}}/backdate", { body: { days: 3, installment_number: 2 }, status: 200 }),
+  runLoanJobs("Run the loan job (grace over)"),
+  lrLoan("A ₦500 late fee (5% is under the ₦500 minimum)", [["fee added once", "j.late_fees_owed_minor === 50000 && j.balance_remaining_minor === 3050000 && j.amount_due_now_minor === 1050000"]]),
+  newestAlert("Alert: late fee", [["\"Late fee of ₦500.00 added to your loan\"", 'j.data[0].title === "Late fee of ₦500.00 added to your loan"']]),
+  runLoanJobs("Run the loan job again"),
+  lrLoan("Still one fee: it isn't charged twice", [["unchanged", "j.late_fees_owed_minor === 50000 && j.balance_remaining_minor === 3050000"]]),
+
+  // paying in parts
+  req("Dev: fund Lola's business wallet with ₦100,000", "POST", "/dev/accounts/{{lrBizId}}/fund", { idem: "new", body: { amount_minor: 10000000 }, status: 201 }),
+  lrPay("Pay ₦50 (under the minimum)", 5000, { status: 422 }),
+  req("Payoff quote", "GET", "/loans/{{lrLoanId}}/payoff", {
+    status: 200,
+    checks: [["₦10,500 overdue + ₦20,000 principal, no interest at 0%", "j.overdue_minor === 1050000 && j.late_fees_minor === 50000 && j.principal_left_minor === 2000000 && j.total_minor === 3050000"]],
+  }),
+  lrPay("Pay a kobo more than the payoff", 3050001, { status: 422, checks: [["says the most you can pay", 'j.error.details.amount_minor[0].includes("3050000")']] }),
+  lrPay("Pay ₦300: the late fee comes first", 30000, {
+    status: 201,
+    checks: [["all of it to the fee", "j.applied.late_fees_minor === 30000 && j.applied.principal_minor === 0 && j.new_balance_remaining_minor === 3020000"]],
+  }),
+  lrPay("Pay ₦15,200: the rest of the fee, installment 2, then half of 3", 1520000, {
+    status: 201,
+    checks: [
+      ["₦200 fee, ₦15,000 principal", "j.applied.late_fees_minor === 20000 && j.applied.principal_minor === 1500000"],
+      ["installment 2 done, ₦15,000 left", 'j.installments_completed.join() === "2" && j.new_balance_remaining_minor === 1500000'],
+    ],
+  }),
+  lrLoan("Nothing due any more", [["caught up", "j.amount_due_now_minor === 0 && j.days_overdue === null && j.next_installment.installment_number === 3 && j.next_installment.remaining_minor === 500000"]]),
+
+  // default and catching up
+  daysToBeDue(3, "lrShift3Amount", 95),
+  req("Dev: installment 3 now 95 days overdue", "POST", "/dev/loans/{{lrLoanId}}/backdate", { body: { days: "{{lrShift3Amount}}", installment_number: 3 }, status: 200 }),
+  runLoanJobs("Run the loan job"),
+  lrLoan("Defaulted, with installment 3's late fee", [["defaulted", 'j.loan_status === "defaulted" && j.defaulted_at !== null && j.balance_remaining_minor === 1550000 && j.days_overdue === 95']]),
+  newestAlert("Alert: default", [["\"Your loan is in default\"", 'j.data[0].title === "Your loan is in default"']]),
+  req("Apply for another loan while in default", "POST", "/loans/applications", { body: lrApply("lrBizId"), status: 409 }),
+  lrPay("Pay what's overdue (₦5,500)", 550000, {
+    status: 201,
+    checks: [["caught up: back to active", 'j.loan_status === "active" && j.installments_completed.join() === "3" && j.new_balance_remaining_minor === 1000000']],
+  }),
+  lrLoan("Active again", [["defaulted_at cleared", 'j.loan_status === "active" && j.defaulted_at === null']]),
+  req("Pay it off", "POST", "/loans/{{lrLoanId}}/payoff", {
+    idem: "new",
+    body: { source_account_id: "{{lrBizId}}" },
+    status: 201,
+    checks: [["₦10,000, repaid", 'j.kind === "payoff" && j.amount_minor === 1000000 && j.loan_status === "repaid"']],
+  }),
+
+  // paying ahead on a loan with interest
+  req("Apply: ₦30,000 over 3 months into the business wallet", "POST", "/loans/applications", {
+    body: lrApply("lrBizId", { requested_amount_minor: 3000000, term_months: 3 }),
+    status: 202,
+    save: [["lrApp2Id", "j.application_id"]],
+  }),
+  req("Dev: approve at 24% and pay out", "POST", "/dev/loans/applications/{{lrApp2Id}}/decide", {
+    body: { decision: "approve", interest_rate_bps: 2400 },
+    status: 201,
+    save: [["lrLoanId", "j.loan_id"]],
+  }),
+  req("The schedule", "GET", "/loans/{{lrLoanId}}/schedule", {
+    status: 200,
+    save: [["lrPayAheadAmount", "String(j.data[0].installment_amount_minor + 1000000)"], ["lrInterest3", "j.data[2].interest_minor"]],
+    checks: [["interest on each installment", "j.data.length === 3 && j.data.every((x) => x.interest_minor > 0)"]],
+  }),
+  req("Payoff quote on day one", "GET", "/loans/{{lrLoanId}}/payoff", {
+    status: 200,
+    checks: [["just the principal: no interest has built up yet", "j.total_minor === 3000000 && j.interest_to_date_minor === 0 && j.interest_saved_minor > 0"]],
+  }),
+  lrPay("Pay installment 1 plus ₦10,000 extra", "{{lrPayAheadAmount}}", {
+    status: 201,
+    checks: [["installment 1 paid early; the extra goes on the last one, with interest waived", 'j.installments_completed.join() === "1" && j.applied.interest_waived_minor > 0']],
+  }),
+  req("The last installment's principal was paid down", "GET", "/loans/{{lrLoanId}}/schedule", {
+    status: 200,
+    checks: [
+      ["₦10,000 off installment 3's principal, part of its interest waived", "j.data[2].principal_paid_minor === 1000000 && j.data[2].interest_waived_minor > 0 && j.data[2].interest_waived_minor < n(\"lrInterest3\")"],
+      ["installment 2 untouched: same monthly amount", "j.data[1].principal_paid_minor === 0 && j.data[1].remaining_minor === j.data[1].installment_amount_minor"],
+    ],
+  }),
+  req("Pay it off", "POST", "/loans/{{lrLoanId}}/payoff", {
+    idem: "new",
+    body: { source_account_id: "{{lrBizId}}" },
+    status: 201,
+    checks: [["repaid, the rest of the interest waived", 'j.kind === "payoff" && j.loan_status === "repaid" && j.applied.interest_waived_minor > 0']],
+  }),
+  req("Pay off a repaid loan", "POST", "/loans/{{lrLoanId}}/payoff", { idem: "new", body: { source_account_id: "{{lrBizId}}" }, status: 409 }),
+  ...newUser("lrOther", "another customer"),
+  req("Someone else's payoff quote", "GET", "/loans/{{lrLoanId}}/payoff", { status: 404 }),
+  req("Someone else's auto-debit", "PATCH", "/loans/{{lrLoanId}}/auto-debit", { body: { enabled: false }, status: 404 }),
+  invariants(),
+];
+
 const wrapUp = [
   signIn("ada"),
   req("2FA: start setup (for the brute-force check)", "POST", "/auth/2fa/enable", { status: 200 }),
@@ -3168,7 +3335,8 @@ const main = collection(
     folder("14. Savings goals", "Goals that hold real money in their own savings account: validation, contributions from a wallet (KYC, currency, insufficient funds, idempotent retries including a lost reply, a concurrent race), withdrawals, the goal's activity and alerts, the goal's account refusing transfers and direct closing, editing, closing (money back to a wallet, or empty), and other users. A fresh saver.", goals),
     folder("15. Payroll", "Paying other VergePay customers: adding payees by account number (KYC, validation, own wallet, duplicates), pay runs that are all or nothing (refusals before any money moves, insufficient funds, mixed currencies, inactive payees), idempotent retries including a lost reply, due dates by frequency, a concurrent race, and the payee's side (alert, balance, privacy, no reversal). Four fresh customers.", payroll),
     folder("16. Withdrawals", "Withdrawing to a Nigerian bank account through Flutterwave Transfers (the stand-in): banks, name enquiry and saved accounts, the fee split (half each, the customer's rounded down), refusals before any money moves, the wallet debited at once, idempotent retries including a lost reply, a webhook that isn't trusted, success, a bank failure refunded with its reason, Flutterwave refusing or unreachable, the daily limit (and a concurrent race on it), removing a bank account, and other users. A fresh customer.", withdrawals),
-    folder("17. Wrap-up", "The 2FA brute-force limit, resetting the test users, and logout.", wrapUp),
+    folder("17. Loan repayment rules", "Auto-debit on the due date (collected; or not, with one alert a day), the late fee after 3 days' grace (charged once, ₦500 minimum), paying any amount (fees first, then the oldest installment, then the next), the payoff quote and the most you can pay, default at 90 days overdue (no new loans) and back to active once caught up, paying off, and paying ahead on a loan with interest (the last installment's principal paid down and part of its interest waived). A fresh borrower; the loan job is run through /dev/loans/run-jobs.", loanRules),
+    folder("18. Wrap-up", "The 2FA brute-force limit, resetting the test users, and logout.", wrapUp),
   ],
 );
 

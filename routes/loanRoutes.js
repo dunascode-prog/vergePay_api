@@ -6,10 +6,13 @@ import {
   getLoan,
   getLoanApplication,
   getLoanSchedule,
+  getPayoffQuote,
   listLoanApplications,
   listLoans,
+  payOffLoan,
   rejectLoanApplication,
   repayLoan,
+  setAutoDebit,
 } from "../controllers/loanController.js";
 import { idempotency, optionalIdempotency } from "../utils/idempotency.js";
 import { requireInternalCaller } from "../utils/internalAuth.js";
@@ -31,5 +34,8 @@ loanRouter.get("/:loanId", verifyAccessToken, getLoan);
 loanRouter.get("/:loanId/schedule", verifyAccessToken, getLoanSchedule);
 loanRouter.post("/:loanId/disburse", requireInternalCaller, idempotency, disburseLoan);
 loanRouter.post("/:loanId/repayments", verifyAccessToken, moneyLimiter, idempotency, repayLoan);
+loanRouter.get("/:loanId/payoff", verifyAccessToken, getPayoffQuote);
+loanRouter.post("/:loanId/payoff", verifyAccessToken, moneyLimiter, idempotency, payOffLoan);
+loanRouter.patch("/:loanId/auto-debit", verifyAccessToken, setAutoDebit);
 
 export default loanRouter;

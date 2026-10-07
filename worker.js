@@ -13,14 +13,17 @@ import logger from "./logger.js";
 import { BrokerageAuthError } from "./services/alpaca.js";
 import { dueLinkIds, expireLink, setSyncStatus, syncLink } from "./services/brokerageSync.js";
 import { deliverEmail } from "./services/email.js";
+import { runLoanJobs } from "./services/loanJobs.js";
 import { syncPendingWithdrawals } from "./services/payouts.js";
 import {
   BROKERAGE_QUEUE,
   EMAIL_QUEUE,
+  LOAN_QUEUE,
   PAYOUT_QUEUE,
   RECURRING_QUEUE,
   brokerageQueue,
   enqueueLinkSync,
+  loansQueue,
   payoutsQueue,
   recurringQueue,
   redisConnection,
@@ -142,9 +145,29 @@ await payoutsQueue().upsertJobScheduler(
   { name: "sync-pending-withdrawals", opts: { attempts: 1, removeOnComplete: true, removeOnFail: true } },
 );
 
+// Loans: auto-debits, late fees and defaults (services/loanJobs.js).
+const loanWorker = new Worker(
+  LOAN_QUEUE,
+  async (job) => {
+    if (job.name !== "loan-daily") throw new UnrecoverableError(`Unknown job ${job.name}`);
+    const result = await runLoanJobs();
+    if (result.collected || result.short || result.late_fees || result.defaulted) logger.info({ message: "loan job", ...result });
+    return result;
+  },
+  { connection: redisConnection(), concurrency: 1, drainDelay: 30, stalledInterval: 120_000 },
+);
+loanWorker.on("ready", () => console.log(`worker ready: ${LOAN_QUEUE}, every ${env.loans.jobIntervalMs / 1000}s`));
+loanWorker.on("error", (err) => logger.error({ message: "loan worker error", error: err.message }));
+
+await loansQueue().upsertJobScheduler(
+  "loan-daily",
+  { every: env.loans.jobIntervalMs },
+  { name: "loan-daily", opts: { attempts: 1, removeOnComplete: true, removeOnFail: true } },
+);
+
 async function shutdown() {
-  await Promise.all([worker.close(), emailWorker.close(), billingWorker.close(), payoutWorker.close()]);
-  await Promise.all([brokerageQueue().close(), recurringQueue().close(), payoutsQueue().close()]);
+  await Promise.all([worker.close(), emailWorker.close(), billingWorker.close(), payoutWorker.close(), loanWorker.close()]);
+  await Promise.all([brokerageQueue().close(), recurringQueue().close(), payoutsQueue().close(), loansQueue().close()]);
   process.exit(0);
 }
 process.on("SIGINT", shutdown);
