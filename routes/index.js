@@ -8,6 +8,7 @@ import adminRouter from "./adminRoutes.js";
 import invoiceRouter from "./invoiceRoutes.js";
 import clientRouter from "./clientRoutes.js";
 import recurringPlanRouter from "./recurringPlanRoutes.js";
+import goalRouter from "./goalRoutes.js";
 import payLinkRouter from "./payLinkRoutes.js";
 import cardRouter from "./cardRoutes.js";
 import webhookRouter from "./webhookRoutes.js";
@@ -27,6 +28,7 @@ export default function registerRoutes(app) {
   app.use("/v1/invoices", invoiceRouter);
   app.use("/v1/clients", clientRouter);
   app.use("/v1/recurring-plans", recurringPlanRouter);
+  app.use("/v1/goals", goalRouter);
   // public: invoice pay links
   app.use("/v1/pay", payLinkRouter);
   app.use("/v1/cards", cardRouter);

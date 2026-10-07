@@ -1,5 +1,6 @@
 import z from "zod";
 import { pool } from "../db/connectDB.js";
+import { isGoalAccount } from "../services/goals.js";
 import { postOnce, postTransaction, publicTransaction } from "../services/ledger.js";
 import {
   BadRequestError,
@@ -109,6 +110,18 @@ export async function createTransfer(req, res) {
     if (receiverAccountId === body.sender_account_id) {
       throw new ValidationError({
         details: { receiver_account_id: ["You can't send money to the same account."] },
+      });
+    }
+    // A goal's money moves only through its own endpoints, so the goal's
+    // history and totals always account for it.
+    if (await isGoalAccount(client, body.sender_account_id)) {
+      throw new ConflictError({
+        message: "This account holds a savings goal. Use POST /v1/goals/{goal_id}/withdrawals to move money out.",
+      });
+    }
+    if (await isGoalAccount(client, receiverAccountId)) {
+      throw new ValidationError({
+        details: { receiver_account_id: ["This account holds a savings goal and can't receive transfers."] },
       });
     }
 

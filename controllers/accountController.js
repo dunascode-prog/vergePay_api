@@ -10,6 +10,7 @@ import {
   ValidationError,
 } from "../utils/errorStr.js";
 import { isUuid, validationDetails } from "../utils/validation.js";
+import { isGoalAccount } from "../services/goals.js";
 import {
   ACCOUNT_COLUMNS,
   findOpenAccount,
@@ -238,6 +239,12 @@ function changeStatus(action) {
       if (!from.includes(before.account_status)) {
         throw new ConflictError({
           message: `Can't ${action} an account that is ${before.account_status}.`,
+        });
+      }
+      // A goal's account opens and closes with its goal.
+      if (await isGoalAccount(client, before.account_id)) {
+        throw new ConflictError({
+          message: "This account holds a savings goal. Close the goal instead (POST /v1/goals/{goal_id}/close).",
         });
       }
       if (action === "close" && before.balance_minor !== 0) {

@@ -317,7 +317,24 @@ export async function checkInvariants(req, res) {
       (SELECT count(*) FROM invoices i
        WHERE EXISTS (SELECT 1 FROM invoice_items it WHERE it.invoice_id = i.invoice_id)
          AND i.amount_due_minor <> (SELECT sum(it.amount_minor) FROM invoice_items it WHERE it.invoice_id = i.invoice_id)
-      )::int AS invoice_items_mismatch
+      )::int AS invoice_items_mismatch,
+      -- a goal's money sits in its own savings account, owned by the same
+      -- customer in the same currency; a closed goal has an empty, closed account
+      (SELECT count(*) FROM goals g
+       JOIN account a ON a.account_id = g.account_id
+       WHERE a.account_type <> 'savings' OR a.user_id <> g.user_id OR a.currency_code <> g.currency_code
+          OR (g.goal_status = 'closed') <> (a.account_status = 'closed')
+          OR (g.goal_status = 'closed' AND a.balance_minor <> 0)
+      )::int AS goal_account_mismatch,
+      -- goal money only moves between the goal and its owner's wallets
+      (SELECT count(*) FROM transactions t
+       JOIN goals g ON g.account_id IN (t.sender_account_id, t.receiver_account_id)
+       JOIN account w ON w.account_id = CASE WHEN g.account_id = t.sender_account_id
+                                             THEN t.receiver_account_id ELSE t.sender_account_id END
+       WHERE t.transaction_type NOT IN ('goal_contribution', 'goal_withdrawal')
+          OR w.user_id IS DISTINCT FROM g.user_id OR w.account_type <> 'current'
+          OR (t.transaction_type = 'goal_contribution') <> (t.receiver_account_id = g.account_id)
+      )::int AS goal_transaction_mismatch
   `);
   const checks = result.rows[0];
   return res.status(200).json({

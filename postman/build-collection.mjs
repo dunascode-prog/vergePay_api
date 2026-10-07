@@ -2420,6 +2420,231 @@ const recurring = [
   req("Another customer: can't backdate it", "POST", "/dev/recurring-plans/{{rbMonthlyId}}/backdate", { body: { days: 1 }, status: 404 }),
 ];
 
+// ---------------------------------------------------------------------------
+// 14. Savings goals
+
+const GOAL_DATE_VARS = [
+  'const day = (n) => new Date(Date.now() + n * 86400000).toLocaleDateString("en-CA", { timeZone: "Africa/Lagos" });',
+  'pm.collectionVariables.set("glYesterday", day(-1));',
+  'pm.collectionVariables.set("glInAYear", day(365));',
+  'pm.collectionVariables.set("glInTwoYears", day(730));',
+];
+
+const goalBody = (overrides = {}) => ({
+  name: "Emergency fund",
+  category: "emergency_fund",
+  target_minor: 90000000,
+  currency_code: "NGN",
+  target_date: "{{glInAYear}}",
+  ...overrides,
+});
+
+const contribute = (name, body, opts) =>
+  req(name, "POST", "/goals/{{glGoalId}}/contributions", { idem: "new", body, ...opts });
+const withdraw = (name, body, opts) =>
+  req(name, "POST", "/goals/{{glGoalId}}/withdrawals", { idem: "new", body, ...opts });
+
+const goals = [
+  ...newUser("saver", "the saver (Sade)"),
+  req("The dates this folder uses", "GET", "/users/me", { status: 200, pre: GOAL_DATE_VARS }),
+  openAccount("Sade: personal wallet (NGN)", "glWalletId"),
+  openAccount("Sade: business wallet (USD)", "glUsdWalletId", { purpose: "business", currency: "USD" }),
+
+  // validation
+  req("Goal - empty body", "POST", "/goals", { body: {}, status: 400 }),
+  req("Goal - unsupported currency", "POST", "/goals", { body: goalBody({ currency_code: "EUR" }), status: 422, checks: [["currency flagged", "Boolean(j.error.details.currency_code)"]] }),
+  req("Goal - zero target", "POST", "/goals", { body: goalBody({ target_minor: 0 }), status: 422, checks: [["target flagged", "Boolean(j.error.details.target_minor)"]] }),
+  req("Goal - unknown category", "POST", "/goals", { body: goalBody({ category: "holiday" }), status: 422, checks: [["category flagged", "Boolean(j.error.details.category)"]] }),
+  req("Goal - target date in the past", "POST", "/goals", { body: goalBody({ target_date: "{{glYesterday}}" }), status: 422, checks: [["target_date flagged", "Boolean(j.error.details.target_date)"]] }),
+
+  req("Create goal: ₦900,000 emergency fund in a year", "POST", "/goals", {
+    body: goalBody(),
+    status: 201,
+    save: [["glGoalId", "j.goal_id"], ["glGoalAccountId", "j.account_id"], ["glGoalAccountNumber", "j.account_number"]],
+    checks: [
+      ["active, nothing saved yet", 'j.goal_status === "active" && j.saved_minor === 0 && j.progress_percent === 0 && j.is_funded === false && j.remaining_minor === 90000000'],
+      ["holds its money in its own account", "/^\\d{10}$/.test(j.account_number) && j.currency_code === \"NGN\""],
+    ],
+  }),
+  req("The goal's account is a savings account", "GET", "/accounts/{{glGoalAccountId}}", {
+    status: 200,
+    checks: [["savings, empty", 'j.account_type === "savings" && j.balance_minor === 0']],
+  }),
+
+  // money in
+  contribute("Contribute before the identity check", { from_account_id: "{{glWalletId}}", amount_minor: 100000 }, {
+    status: 403,
+    checks: [["KYC required", 'errorCode === "KYC_REQUIRED"']],
+  }),
+  kycVerify(),
+  req("Dev: fund Sade with ₦500,000", "POST", "/dev/accounts/{{glWalletId}}/fund", { idem: "new", body: { amount_minor: 50000000 }, status: 201 }),
+  req("Contribute - no Idempotency-Key", "POST", "/goals/{{glGoalId}}/contributions", {
+    body: { from_account_id: "{{glWalletId}}", amount_minor: 100000 },
+    status: 400,
+  }),
+  contribute("Contribute - from a wallet in another currency", { from_account_id: "{{glUsdWalletId}}", amount_minor: 100000 }, {
+    status: 422,
+    checks: [["wallet flagged", "Boolean(j.error.details.from_account_id)"]],
+  }),
+  contribute("Contribute - from the goal itself", { from_account_id: "{{glGoalAccountId}}", amount_minor: 100000 }, {
+    status: 422,
+    checks: [["only wallets can fund a goal", "Boolean(j.error.details.from_account_id)"]],
+  }),
+  contribute("Contribute - more than the wallet holds", { from_account_id: "{{glWalletId}}", amount_minor: 60000000 }, {
+    status: 422,
+    checks: [["insufficient funds", 'errorCode === "INSUFFICIENT_FUNDS"']],
+  }),
+  req("Contribute ₦200,000", "POST", "/goals/{{glGoalId}}/contributions", {
+    idem: "new:glKey",
+    body: { from_account_id: "{{glWalletId}}", amount_minor: 20000000 },
+    status: 201,
+    save: [["glContributionId", "j.transaction.transaction_id"]],
+    checks: [
+      ["goal now holds ₦200,000 (22%)", "j.goal.saved_minor === 20000000 && j.goal.progress_percent === 22 && j.goal.contribution_count === 1"],
+      ["a settled goal_contribution into the goal", 'j.transaction.transaction_type === "goal_contribution" && j.transaction.status === "settled" && j.transaction.receiver_account_id === v("glGoalAccountId")'],
+    ],
+  }),
+  req("Contribute - same key again (a retry)", "POST", "/goals/{{glGoalId}}/contributions", {
+    idem: "same:glKey",
+    body: { from_account_id: "{{glWalletId}}", amount_minor: 20000000 },
+    status: 201,
+    checks: [["same transaction, nothing moved twice", 'replayed && j.transaction.transaction_id === v("glContributionId") && j.goal.saved_minor === 20000000']],
+  }),
+  req("Contribute - same key, different amount", "POST", "/goals/{{glGoalId}}/contributions", {
+    idem: "same:glKey",
+    body: { from_account_id: "{{glWalletId}}", amount_minor: 100 },
+    status: 422,
+    checks: [["key conflict", 'errorCode === "IDEMPOTENCY_KEY_CONFLICT"']],
+  }),
+  forgetKey("glKey"),
+  req("Contribute - retry after a lost reply", "POST", "/goals/{{glGoalId}}/contributions", {
+    idem: "same:glKey",
+    body: { from_account_id: "{{glWalletId}}", amount_minor: 20000000 },
+    status: 201,
+    checks: [["answered from the ledger, nothing moved twice", 'replayed && j.transaction.transaction_id === v("glContributionId") && j.goal.saved_minor === 20000000']],
+  }),
+  balanceIs("Wallet is down to ₦300,000", "glWalletId", "30000000"),
+  newestAlert("Alert names the goal", [["\"You saved ₦200,000.00 towards Emergency fund\"", 'j.data[0].title === "You saved ₦200,000.00 towards Emergency fund" && j.data[0].kind === "own_transfer"']]),
+
+  // money out
+  withdraw("Withdraw - more than the goal holds", { to_account_id: "{{glWalletId}}", amount_minor: 20000001 }, {
+    status: 422,
+    checks: [["insufficient funds", 'errorCode === "INSUFFICIENT_FUNDS"']],
+  }),
+  withdraw("Withdraw - to a wallet in another currency", { to_account_id: "{{glUsdWalletId}}", amount_minor: 100 }, {
+    status: 422,
+    checks: [["wallet flagged", "Boolean(j.error.details.to_account_id)"]],
+  }),
+  withdraw("Withdraw ₦50,000", { to_account_id: "{{glWalletId}}", amount_minor: 5000000 }, {
+    status: 201,
+    checks: [
+      ["goal holds ₦150,000", "j.goal.saved_minor === 15000000 && j.goal.withdrawn_minor === 5000000 && j.goal.contributed_minor === 20000000"],
+      ["a goal_withdrawal back to the wallet", 'j.transaction.transaction_type === "goal_withdrawal" && j.transaction.receiver_account_id === v("glWalletId")'],
+    ],
+  }),
+  newestAlert("Alert for the withdrawal", [["\"You withdrew ₦50,000.00 from Emergency fund\"", 'j.data[0].title === "You withdrew ₦50,000.00 from Emergency fund"']]),
+  req("Goal detail with its activity", "GET", "/goals/{{glGoalId}}", {
+    status: 200,
+    checks: [
+      ["two moves, newest first", 'j.activity.length === 2 && j.activity[0].kind === "withdrawal" && j.activity[1].kind === "contribution"'],
+      ["running balance and the wallet on the other side", 'j.activity[0].balance_after_minor === 15000000 && j.activity[1].balance_after_minor === 20000000 && j.activity[0].wallet_account_id === v("glWalletId") && j.activity[0].wallet_purpose === "personal"'],
+    ],
+  }),
+
+  // the goal's account only moves through the goal
+  req("Transfer out of the goal's account directly", "POST", "/transactions", {
+    idem: "new",
+    body: { sender_account_id: "{{glGoalAccountId}}", receiver_account_id: "{{glWalletId}}", amount_minor: 100, currency_code: "NGN" },
+    status: 409,
+  }),
+  req("Transfer into the goal by account number", "POST", "/transactions", {
+    idem: "new",
+    body: { sender_account_id: "{{glWalletId}}", receiver_account_number: "{{glGoalAccountNumber}}", amount_minor: 100, currency_code: "NGN" },
+    status: 422,
+    checks: [["receiver flagged", "Boolean(j.error.details.receiver_account_id)"]],
+  }),
+  req("Close the goal's account directly", "POST", "/accounts/{{glGoalAccountId}}/close", { status: 409 }),
+  req("Freeze the goal's account directly", "POST", "/accounts/{{glGoalAccountId}}/freeze", { status: 409 }),
+
+  concurrently("Concurrent: 4 contributions of ₦100,000 from a wallet holding ₦350,000", {
+    count: 4,
+    method: "POST",
+    path: "/goals/{{glGoalId}}/contributions",
+    bodyExpr: '{ from_account_id: pm.collectionVariables.get("glWalletId"), amount_minor: 10000000 }',
+    expectExpr: `${count(null, 201)} === 3 && ${count(null, 422)} === 1`,
+    label: "three go through, the fourth is refused for insufficient funds",
+    description: "The wallet row is locked while each contribution posts, so they queue and the balance is re-read each time: three fit, the fourth doesn't.",
+  }),
+  req("Goal holds ₦450,000 after the race", "GET", "/goals/{{glGoalId}}", {
+    status: 200,
+    checks: [["₦150,000 + 3 × ₦100,000", "j.saved_minor === 45000000 && j.contribution_count === 4 && j.progress_percent === 50"]],
+  }),
+  balanceIs("Wallet holds ₦50,000", "glWalletId", "5000000"),
+
+  // editing
+  req("Edit - target date in the past", "PATCH", "/goals/{{glGoalId}}", { body: { target_date: "{{glYesterday}}" }, status: 422 }),
+  req("Edit - nothing to change", "PATCH", "/goals/{{glGoalId}}", { body: { goal_id: "x" }, status: 422 }),
+  req("Edit: rename, lower the target to ₦450,000, two years", "PATCH", "/goals/{{glGoalId}}", {
+    body: { name: "Rainy day fund", target_minor: 45000000, target_date: "{{glInTwoYears}}" },
+    status: 200,
+    checks: [["funded now", 'j.name === "Rainy day fund" && j.is_funded === true && j.progress_percent === 100 && j.remaining_minor === 0 && j.target_date === v("glInTwoYears")']],
+  }),
+  contribute("A funded goal can still take more", { from_account_id: "{{glWalletId}}", amount_minor: 1000000 }, {
+    status: 201,
+    checks: [["past the target", "j.goal.saved_minor === 46000000 && j.goal.progress_percent === 100"]],
+  }),
+  req("List: the active goal", "GET", "/goals", {
+    status: 200,
+    checks: [["one goal with its totals", 'j.data.length === 1 && j.data[0].goal_id === v("glGoalId") && j.data[0].saved_minor === 46000000']],
+  }),
+
+  // closing
+  req("Close - money left and no wallet named", "POST", "/goals/{{glGoalId}}/close", {
+    idem: "new",
+    status: 422,
+    checks: [["to_account_id flagged", "Boolean(j.error.details.to_account_id)"]],
+  }),
+  req("Close: everything back to the wallet", "POST", "/goals/{{glGoalId}}/close", {
+    idem: "new:glCloseKey",
+    body: { to_account_id: "{{glWalletId}}" },
+    status: 200,
+    checks: [
+      ["goal closed and empty", 'j.goal.goal_status === "closed" && j.goal.saved_minor === 0 && j.goal.closed_at !== null'],
+      ["the whole ₦460,000 moved back", 'j.transaction.amount_minor === 46000000 && j.transaction.transaction_type === "goal_withdrawal"'],
+    ],
+  }),
+  balanceIs("Wallet is whole again (₦500,000)", "glWalletId", "50000000"),
+  req("The goal's account is closed", "GET", "/accounts/{{glGoalAccountId}}", {
+    status: 200,
+    checks: [["closed", 'j.account_status === "closed" && j.balance_minor === 0']],
+  }),
+  contribute("Contribute to a closed goal", { from_account_id: "{{glWalletId}}", amount_minor: 100 }, { status: 409 }),
+  req("Edit a closed goal", "PATCH", "/goals/{{glGoalId}}", { body: { name: "Again" }, status: 409 }),
+  req("Close it again", "POST", "/goals/{{glGoalId}}/close", { idem: "new", body: { to_account_id: "{{glWalletId}}" }, status: 409 }),
+  req("List: no active goals", "GET", "/goals", { status: 200, checks: [["empty", "j.data.length === 0"]] }),
+  req("List: all goals", "GET", "/goals?status=all", { status: 200, checks: [["the closed one", 'j.data.length === 1 && j.data[0].goal_status === "closed"']] }),
+
+  req("An empty goal in dollars", "POST", "/goals", {
+    body: goalBody({ name: "New laptop", category: "equipment", target_minor: 160000, currency_code: "USD" }),
+    status: 201,
+    save: [["glUsdGoalId", "j.goal_id"]],
+  }),
+  req("Close an empty goal (no wallet needed)", "POST", "/goals/{{glUsdGoalId}}/close", {
+    idem: "new",
+    status: 200,
+    checks: [["closed, nothing moved", 'j.goal.goal_status === "closed" && j.transaction === null']],
+  }),
+
+  ...newUser("glOther", "another customer"),
+  req("Someone else's goal", "GET", "/goals/{{glGoalId}}", { status: 404 }),
+  req("Contribute to someone else's goal", "POST", "/goals/{{glGoalId}}/contributions", {
+    idem: "new",
+    body: { from_account_id: "{{glWalletId}}", amount_minor: 100 },
+    status: 404,
+  }),
+  invariants(),
+];
+
 const wrapUp = [
   signIn("ada"),
   req("2FA: start setup (for the brute-force check)", "POST", "/auth/2fa/enable", { status: 200 }),
@@ -2547,7 +2772,8 @@ const main = collection(
     folder("11. Notifications", "Debit and credit alerts written with the money: a top-up, a transfer (both sides, named, with the note), an idempotent replay that alerts nobody twice, a move between own wallets, paging, read and read-all, and someone else's alert. Two fresh customers. Live delivery over the WebSocket: npm run test:realtime.", notifications),
     folder("12. Invoicing clients and pay links", "The client book, draft invoices with line items (rounding to the kobo), sending with a number, pay link and email (sent by the worker), reminders and their throttle, the public pay page (what it hides), Flutterwave checkout through the stand-in (paid, declined, tampered, two payers at once, the webhook), cancelling, a VergePay customer paying the link from their wallet, refunds, archiving, and other users' clients. Two fresh customers; needs the worker running.", clientInvoicing),
     folder("13. Recurring billing", "Plans that invoice a client on a schedule: validation, a plan that starts today billing at once (number, pay link, email), the scheduled run (no double billing), catching up missed cycles, pausing (not billed while paused, resuming without back-billing), editing, a plan that can't bill saying why once, cancelling, listing, and other users. A fresh customer; the billing job is run through /dev/recurring/run.", recurring),
-    folder("14. Wrap-up", "The 2FA brute-force limit, resetting the test users, and logout.", wrapUp),
+    folder("14. Savings goals", "Goals that hold real money in their own savings account: validation, contributions from a wallet (KYC, currency, insufficient funds, idempotent retries including a lost reply, a concurrent race), withdrawals, the goal's activity and alerts, the goal's account refusing transfers and direct closing, editing, closing (money back to a wallet, or empty), and other users. A fresh saver.", goals),
+    folder("15. Wrap-up", "The 2FA brute-force limit, resetting the test users, and logout.", wrapUp),
   ],
 );
 
