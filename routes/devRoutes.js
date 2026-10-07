@@ -12,6 +12,7 @@ import {
   verifyOwnKyc,
   decideOwnLoanApplication,
   backdateLoan,
+  runLoanJobsNow,
 } from "../controllers/devController.js";
 import { idempotency } from "../utils/idempotency.js";
 import { verifyAccessToken, verifyAccessTokenAllowPending } from "../utils/jwt.js";
@@ -34,5 +35,6 @@ devRouter.post("/oauth-states/expire", verifyAccessToken, expireOauthState);
 devRouter.post("/brokerage/run-scheduler", verifyAccessToken, runBrokerageScheduler);
 devRouter.post("/loans/applications/:applicationId/decide", verifyAccessToken, decideOwnLoanApplication);
 devRouter.post("/loans/:loanId/backdate", verifyAccessToken, backdateLoan);
+devRouter.post("/loans/run-jobs", verifyAccessToken, runLoanJobsNow);
 
 export default devRouter;

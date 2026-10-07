@@ -103,8 +103,22 @@ export function payoutsQueue() {
   return payoutQueue;
 }
 
+// Loans (services/loanJobs.js). One scheduled job, loan-daily, every
+// LOAN_JOB_INTERVAL_MS: auto-debits, late fees and defaults.
+export const LOAN_QUEUE = "loans";
+
+let loanJobQueue;
+export function loansQueue() {
+  loanJobQueue ??= new Queue(LOAN_QUEUE, {
+    connection: redisConnection(),
+    defaultJobOptions: { attempts: 1, removeOnComplete: true, removeOnFail: true },
+  });
+  return loanJobQueue;
+}
+
 export async function closeQueue() {
-  await Promise.all([queue?.close(), mailQueue?.close(), billingQueue?.close(), payoutQueue?.close()]);
+  await Promise.all([queue?.close(), mailQueue?.close(), billingQueue?.close(), payoutQueue?.close(), loanJobQueue?.close()]);
+  loanJobQueue = undefined;
   queue = undefined;
   mailQueue = undefined;
   billingQueue = undefined;

@@ -10,6 +10,7 @@ import { ipKeyGenerator } from "express-rate-limit";
 import { moneyLimiter, signinLimiter, twoFactorLimiter } from "../utils/rateLimiters.js";
 import { endSession, issueSession } from "../utils/session.js";
 import { brokerageQueue } from "../services/queue.js";
+import { runLoanJobs } from "../services/loanJobs.js";
 import { billDuePlans } from "../services/recurring.js";
 import { isUuid, validationDetails } from "../utils/validation.js";
 import { approveApplication, disburseApprovedLoan, rejectApplication } from "./loanController.js";
@@ -276,14 +277,34 @@ export async function checkInvariants(req, res) {
        WHERE a.balance_minor <> COALESCE((
          SELECT sum(CASE direction WHEN 'CREDIT' THEN amount_minor ELSE -amount_minor END)
          FROM ledger_entries le WHERE le.account_id = a.account_id), 0))::int AS cached_balance_drift,
+      -- a loan's balance is exactly what's still owed on its installments
       (SELECT count(*) FROM loans l
-       WHERE l.loan_status IN ('active', 'repaid')
+       WHERE l.loan_status IN ('active', 'repaid', 'defaulted')
          AND l.balance_remaining_minor <> COALESCE((
-           SELECT sum(installment_amount_minor) FROM loan_repayment_schedule s
-           WHERE s.loan_id = l.loan_id AND NOT paid_flag), 0))::int AS loan_balance_drift,
+           SELECT sum(s.late_fee_minor - s.late_fee_paid_minor + s.interest_minor - s.interest_paid_minor
+                      - s.interest_waived_minor + s.principal_minor - s.principal_paid_minor)
+           FROM loan_repayment_schedule s WHERE s.loan_id = l.loan_id), 0))::int AS loan_balance_drift,
+      -- each installment's paid and waived parts are exactly the sum of the
+      -- payments' splits
       (SELECT count(*) FROM loan_repayment_schedule s
-       JOIN transactions t ON t.transaction_id = s.paid_transaction_id
-       WHERE t.amount_minor <> s.installment_amount_minor OR t.loan_id <> s.loan_id)::int AS schedule_mismatch,
+       LEFT JOIN LATERAL (
+         SELECT COALESCE(sum(a.principal_minor), 0) AS p, COALESCE(sum(a.interest_minor), 0) AS i,
+                COALESCE(sum(a.late_fee_minor), 0) AS f, COALESCE(sum(a.interest_waived_minor), 0) AS w
+         FROM loan_payment_allocations a WHERE a.schedule_id = s.schedule_id) x ON TRUE
+       WHERE s.principal_paid_minor <> x.p OR s.interest_paid_minor <> x.i
+          OR s.late_fee_paid_minor <> x.f OR s.interest_waived_minor <> x.w)::int AS schedule_mismatch,
+      -- each repayment's money is exactly what it paid, into its own loan
+      (SELECT count(*) FROM loan_payments p
+       JOIN transactions t ON t.transaction_id = p.transaction_id
+       WHERE t.transaction_type <> 'loan_repayment' OR t.loan_id <> p.loan_id OR t.amount_minor <> p.amount_minor
+          OR t.amount_minor <> (SELECT COALESCE(sum(a.principal_minor + a.interest_minor + a.late_fee_minor), 0)
+                                FROM loan_payment_allocations a WHERE a.transaction_id = p.transaction_id)
+      )::int AS loan_payment_mismatch,
+      -- and every repayment is recorded
+      (SELECT count(*) FROM transactions t
+       WHERE t.transaction_type = 'loan_repayment' AND t.status = 'settled'
+         AND NOT EXISTS (SELECT 1 FROM loan_payments p WHERE p.transaction_id = t.transaction_id)
+      )::int AS loan_repayment_unrecorded,
       (SELECT count(*) FROM invoices i
        JOIN transactions t ON t.transaction_id = i.settling_transaction_id
        WHERE t.transaction_type <> 'invoice_payment'
@@ -423,11 +444,24 @@ export async function decideOwnLoanApplication(req, res) {
   return res.status(201).json({ ...loan, loan_status: "active" });
 }
 
-// POST /v1/dev/loans/:loanId/backdate  { days }
-// Moves the unpaid installments of one of the caller's loans back by `days`,
-// so the next one can be shown as overdue.
+// POST /v1/dev/loans/run-jobs
+// Runs the worker's loan job now (auto-debits, late fees, defaults), for the
+// caller's own loans only, so tests never touch anyone else's.
+export async function runLoanJobsNow(req, res) {
+  return res.status(200).json(await runLoanJobs({ userId: req.user.sub }));
+}
+
+const loanBackdateSchema = z.strictObject({
+  days: z.number().int().min(1).max(365),
+  // only this installment (otherwise every unpaid one)
+  installment_number: z.number().int().min(1).optional(),
+});
+
+// POST /v1/dev/loans/:loanId/backdate  { days, installment_number? }
+// Moves the unpaid installments of one of the caller's loans (or just one
+// of them) back by `days`, so they can be shown as overdue.
 export async function backdateLoan(req, res) {
-  const validation = backdateSchema.safeParse(req.body ?? {});
+  const validation = loanBackdateSchema.safeParse(req.body ?? {});
   if (!validation.success) {
     throw new ValidationError({ details: validationDetails(validation.error) });
   }
@@ -437,8 +471,9 @@ export async function backdateLoan(req, res) {
     `UPDATE loan_repayment_schedule s SET due_date = s.due_date - $3::int
      FROM loans l JOIN account acc ON acc.account_id = l.account_id
      WHERE s.loan_id = l.loan_id AND l.loan_id = $1 AND acc.user_id = $2 AND NOT s.paid_flag
+       AND ($4::int IS NULL OR s.installment_number = $4)
      RETURNING s.installment_number`,
-    [loanId, req.user.sub, validation.data.days],
+    [loanId, req.user.sub, validation.data.days, validation.data.installment_number ?? null],
   );
   if (result.rowCount === 0) throw new NotFoundError({ message: "Loan not found, or nothing left to pay." });
   return res.status(200).json({ loan_id: loanId, installments_moved: result.rowCount });
