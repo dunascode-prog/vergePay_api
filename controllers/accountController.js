@@ -294,6 +294,16 @@ function changeStatus(action) {
             message: "Can't close an account while a card payment into it is still pending.",
           });
         }
+        // a withdrawal on its way can still fail, and its refund lands here
+        const payout = await client.query(
+          `SELECT 1 FROM withdrawals WHERE account_id = $1 AND status = 'pending' LIMIT 1`,
+          [before.account_id],
+        );
+        if (payout.rowCount > 0) {
+          throw new ConflictError({
+            message: "Can't close an account while a withdrawal from it is still on its way.",
+          });
+        }
         if (cardUse.rows[0].has_cards) {
           throw new ConflictError({
             message: "Can't close an account with linked cards. Remove them first.",

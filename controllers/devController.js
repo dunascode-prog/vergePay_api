@@ -307,12 +307,16 @@ export async function checkInvariants(req, res) {
        WHERE t.status = 'settled' AND t.transaction_type IN ('card_payment', 'bank_deposit')
          AND (SELECT count(*) FROM ledger_entries le WHERE le.transaction_id = t.transaction_id) <> 2
       )::int AS settled_processor_money_without_entries,
-      -- everything paid through Flutterwave (card top-ups, bank deposits,
-      -- invoices paid on the pay page) leaves its clearing account
+      -- the clearing account is exactly what came in through Flutterwave
+      -- (card top-ups, bank deposits, invoices paid on the pay page) less what
+      -- went back out (withdrawals paid, and Flutterwave's transfer fees)
       (SELECT COALESCE(sum(a.balance_minor), 0) + COALESCE((
          SELECT sum(t.amount_minor) FROM transactions t
          JOIN account s ON s.account_id = t.sender_account_id
-         WHERE t.status = 'settled' AND s.account_number LIKE 'SYS-FLW-%'), 0)
+         WHERE t.status IN ('settled', 'reversed') AND s.account_number LIKE 'SYS-FLW-%'), 0) - COALESCE((
+         SELECT sum(t.amount_minor) FROM transactions t
+         JOIN account r ON r.account_id = t.receiver_account_id
+         WHERE t.status IN ('settled', 'reversed') AND r.account_number LIKE 'SYS-FLW-%'), 0)
        FROM account a WHERE a.account_number LIKE 'SYS-FLW-%')::bigint AS processor_clearing_drift,
       (SELECT count(*) FROM invoices i
        WHERE EXISTS (SELECT 1 FROM invoice_items it WHERE it.invoice_id = i.invoice_id)
@@ -355,7 +359,27 @@ export async function checkInvariants(req, res) {
       (SELECT count(*) FROM transactions t
        WHERE t.transaction_type = 'payroll_payment'
          AND NOT EXISTS (SELECT 1 FROM payroll_payments pp WHERE pp.transaction_id = t.transaction_id)
-      )::int AS payroll_transaction_unrecorded
+      )::int AS payroll_transaction_unrecorded,
+      -- a withdrawal's money left its wallet for the payout account, its fee
+      -- for the fee account, and its status matches what happened to both
+      (SELECT count(*) FROM withdrawals w
+       JOIN transactions t ON t.transaction_id = w.transaction_id
+       JOIN account payout ON payout.account_id = t.receiver_account_id
+       LEFT JOIN transactions f ON f.transaction_id = w.fee_transaction_id
+       WHERE t.transaction_type <> 'withdrawal' OR t.amount_minor <> w.amount_minor
+          OR t.sender_account_id <> w.account_id OR payout.account_number <> 'SYS-PAYOUT-' || w.currency_code
+          OR (w.fee_transaction_id IS NOT NULL AND (f.transaction_type <> 'fee' OR f.amount_minor <> w.customer_fee_minor OR f.sender_account_id <> w.account_id))
+          OR t.status::text <> CASE w.status WHEN 'failed' THEN 'reversed' ELSE 'settled' END
+          OR (w.status = 'failed') <> EXISTS (
+               SELECT 1 FROM transactions r WHERE r.reverses_transaction_id = w.transaction_id
+                 AND r.transaction_type = 'refund' AND r.amount_minor = w.amount_minor AND r.receiver_account_id = w.account_id)
+          OR (w.status = 'successful') <> EXISTS (
+               SELECT 1 FROM transactions p WHERE p.idempotency_key = 'withdrawal-paid:' || w.withdrawal_id AND p.amount_minor = w.amount_minor)
+      )::int AS withdrawal_mismatch,
+      -- the payout account holds exactly the withdrawals still on their way
+      (SELECT COALESCE(sum(a.balance_minor), 0) - COALESCE((
+         SELECT sum(w.amount_minor) FROM withdrawals w WHERE w.status = 'pending'), 0)
+       FROM account a WHERE a.account_number LIKE 'SYS-PAYOUT-%')::bigint AS payout_in_transit_drift
   `);
   const checks = result.rows[0];
   return res.status(200).json({

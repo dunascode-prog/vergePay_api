@@ -50,7 +50,8 @@ function creditText(txn, amount, mine, other) {
       // VergePay sender, so the invoice names who paid
       return { title: `Invoice paid: ${amount}${from ? ` by ${from}` : ""}`, body: withNote(into, txn.description) };
     case "refund":
-      return { title: `Refund of ${amount}${from ? ` from ${from}` : ""}`, body: into };
+      // a refund from VergePay itself says why (e.g. a withdrawal that failed)
+      return { title: `Refund of ${amount}${from ? ` from ${from}` : ""}`, body: from ? into : withNote(into, txn.description) };
     case "payroll_payment":
       // description: "Payroll" or "Payroll · October"
       return { title: from ? `${from} paid you ${amount}` : `${amount} payroll payment`, body: withNote(into, txn.description) };
@@ -75,6 +76,9 @@ function debitText(txn, amount, mine, other) {
       return { title: `You paid ${amount}${to ? ` to ${to}` : ""}`, body: withNote(outOf, txn.description) };
     case "fee":
       return { title: `Fee of ${amount}`, body: withNote(outOf, txn.description) };
+    case "withdrawal":
+      // description: "To GTBank · 0123456789"
+      return { title: `You withdrew ${amount}`, body: withNote(outOf, txn.description) };
     default:
       return { title: `${amount} debited from your ${walletName(mine)}`, body: txn.description };
   }

@@ -88,9 +88,25 @@ export function recurringQueue() {
   return billingQueue;
 }
 
+// Withdrawals (services/payouts.js). One scheduled job,
+// sync-pending-withdrawals, every WITHDRAWAL_SYNC_INTERVAL_MS: it asks
+// Flutterwave about every withdrawal still pending after two minutes, in
+// case the webhook never arrived.
+export const PAYOUT_QUEUE = "payouts";
+
+let payoutQueue;
+export function payoutsQueue() {
+  payoutQueue ??= new Queue(PAYOUT_QUEUE, {
+    connection: redisConnection(),
+    defaultJobOptions: { attempts: 1, removeOnComplete: true, removeOnFail: true },
+  });
+  return payoutQueue;
+}
+
 export async function closeQueue() {
-  await Promise.all([queue?.close(), mailQueue?.close(), billingQueue?.close()]);
+  await Promise.all([queue?.close(), mailQueue?.close(), billingQueue?.close(), payoutQueue?.close()]);
   queue = undefined;
   mailQueue = undefined;
   billingQueue = undefined;
+  payoutQueue = undefined;
 }

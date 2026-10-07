@@ -2,6 +2,7 @@ import crypto from "crypto";
 import { pool } from "../db/connectDB.js";
 import env from "../env.js";
 import logger from "../logger.js";
+import { syncWithdrawal } from "../services/payouts.js";
 import { creditBankDeposit, syncCardPayment } from "../services/processorPayments.js";
 import { UnauthorizedError } from "../utils/errorStr.js";
 
@@ -69,6 +70,18 @@ async function handleChargeCompleted(data) {
   return { outcome: "ignored", note: "unknown tx_ref" };
 }
 
+// Routes one transfer.completed event (a withdrawal) to the withdrawal it's
+// about. The status in the body isn't trusted: syncWithdrawal asks
+// Flutterwave's transfer API.
+async function handleTransferCompleted(data) {
+  const reference = data?.reference;
+  if (!reference) return { outcome: "ignored", note: "no reference" };
+  const found = await pool.query(`SELECT withdrawal_id FROM withdrawals WHERE reference = $1`, [reference]);
+  if (!found.rows[0]) return { outcome: "ignored", note: "unknown reference" };
+  const status = await syncWithdrawal(found.rows[0].withdrawal_id);
+  return { outcome: "processed", note: `withdrawal ${status}` };
+}
+
 export async function receivePaymentProcessorWebhook(req, res) {
   if (!isAuthentic(req)) {
     throw new UnauthorizedError({ message: "Invalid webhook signature." });
@@ -101,6 +114,8 @@ export async function receivePaymentProcessorWebhook(req, res) {
   try {
     if (type === "charge.completed") {
       result = await handleChargeCompleted(req.body.data);
+    } else if (type === "transfer.completed") {
+      result = await handleTransferCompleted(req.body.data);
     } else if (type.startsWith("chargeback.")) {
       // Stored for review; acting on disputes (freezing funds, reversing)
       // isn't built yet.

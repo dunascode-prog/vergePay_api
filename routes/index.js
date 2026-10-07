@@ -10,6 +10,7 @@ import clientRouter from "./clientRoutes.js";
 import recurringPlanRouter from "./recurringPlanRoutes.js";
 import goalRouter from "./goalRoutes.js";
 import { payeeRouter, payrollRouter } from "./payrollRoutes.js";
+import { bankAccountRouter, bankRouter, withdrawalRouter } from "./withdrawalRoutes.js";
 import payLinkRouter from "./payLinkRoutes.js";
 import cardRouter from "./cardRoutes.js";
 import webhookRouter from "./webhookRoutes.js";
@@ -32,6 +33,9 @@ export default function registerRoutes(app) {
   app.use("/v1/goals", goalRouter);
   app.use("/v1/payees", payeeRouter);
   app.use("/v1/payroll", payrollRouter);
+  app.use("/v1/banks", bankRouter);
+  app.use("/v1/bank-accounts", bankAccountRouter);
+  app.use("/v1/withdrawals", withdrawalRouter);
   // public: invoice pay links
   app.use("/v1/pay", payLinkRouter);
   app.use("/v1/cards", cardRouter);

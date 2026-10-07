@@ -2844,6 +2844,200 @@ const payroll = [
   invariants(),
 ];
 
+// ---------------------------------------------------------------------------
+// 16. Withdrawals to bank accounts
+
+const transferMode = (mode) => standIn(`Stand-in: transfers ${mode}`, "/_test/transfer-mode", { transfer: mode });
+const withdrawToBank = (name, body, opts) => req(name, "POST", "/withdrawals", { idem: "new", body, ...opts });
+const wdBody = (amount, extra = {}) => ({ account_id: "{{wdWalletId}}", bank_account_id: "{{wdBankId}}", amount_minor: amount, ...extra });
+const transferWebhook = (name, refVar, status, opts = {}) =>
+  req(name, "POST", "/webhooks/payment-processor", {
+    headers: webhookHeaders,
+    // the event's id is unique per transfer and outcome, as Flutterwave's are
+    body: { event: "transfer.completed", data: { id: `{{${refVar}}}-${status}`, reference: `{{${refVar}}}`, status } },
+    status: 200,
+    ...opts,
+  });
+
+const withdrawals = [
+  ...newUser("wd", "the withdrawer (Wale)"),
+  openAccount("Wale: personal wallet (NGN)", "wdWalletId"),
+  openAccount("Wale: business wallet (USD)", "wdUsdId", { purpose: "business", currency: "USD" }),
+  transferMode("pending"),
+
+  // banks and saved bank accounts
+  req("Banks to pick from", "GET", "/banks", {
+    status: 200,
+    checks: [["includes Access Bank (044), alphabetical", 'j.data.some((b) => b.code === "044" && b.name === "Access Bank") && j.data[0].name <= j.data[1].name']],
+  }),
+  req("Name enquiry before the identity check", "GET", "/bank-accounts/resolve?bank_code=044&account_number=0690000031", {
+    status: 403,
+    checks: [["KYC required", 'errorCode === "KYC_REQUIRED"']],
+  }),
+  kycVerify(),
+  req("Name enquiry - not 10 digits", "GET", "/bank-accounts/resolve?bank_code=044&account_number=123", { status: 422 }),
+  req("Name enquiry - unknown bank", "GET", "/bank-accounts/resolve?bank_code=999&account_number=0690000031", {
+    status: 422,
+    checks: [["bank flagged", "Boolean(j.error.details.bank_code)"]],
+  }),
+  req("Name enquiry - no such account", "GET", "/bank-accounts/resolve?bank_code=044&account_number=0000000000", {
+    status: 422,
+    checks: [["says no Access Bank account has it", 'j.error.details.account_number[0].includes("Access Bank")']],
+  }),
+  req("Name enquiry", "GET", "/bank-accounts/resolve?bank_code=044&account_number=0690000031", {
+    status: 200,
+    checks: [["the holder's name, from Flutterwave", 'j.account_name === "STAND-IN HOLDER 0031" && j.bank_name === "Access Bank"']],
+  }),
+  req("Save the bank account", "POST", "/bank-accounts", {
+    body: { bank_code: "044", account_number: "0690000031" },
+    status: 201,
+    save: [["wdBankId", "j.bank_account_id"]],
+    checks: [["saved with the name checked again on the server", 'j.account_name === "STAND-IN HOLDER 0031" && j.currency_code === "NGN"']],
+  }),
+  req("Save it again", "POST", "/bank-accounts", { body: { bank_code: "044", account_number: "0690000031" }, status: 409 }),
+  req("Saved bank accounts", "GET", "/bank-accounts", { status: 200, checks: [["one", "j.data.length === 1"]] }),
+
+  // the fee split
+  req("Quote ₦20,000: Flutterwave's ₦26.875, split", "GET", "/withdrawals/quote?amount_minor=2000000", {
+    status: 200,
+    checks: [
+      ["Wale pays half rounded down (₦13.43); VergePay covers ₦13.45", "j.fee_minor === 1343 && j.vergepay_covers_minor === 1345 && j.total_debit_minor === 2001343"],
+      ["₦500,000 a day, all of it left", "j.daily_limit_minor === 50000000 && j.daily_remaining_minor === 50000000 && j.min_amount_minor === 10000"],
+    ],
+  }),
+
+  // refusals, before any money moves
+  withdrawToBank("Withdraw - more than the wallet holds", wdBody(2000000), {
+    status: 422,
+    checks: [["insufficient funds, with the fee in words", 'errorCode === "INSUFFICIENT_FUNDS" && errorMessage.includes("₦20,013.43")']],
+  }),
+  req("Dev: fund Wale with ₦600,000", "POST", "/dev/accounts/{{wdWalletId}}/fund", { idem: "new", body: { amount_minor: 60000000 }, status: 201 }),
+  req("Withdraw - no Idempotency-Key", "POST", "/withdrawals", { body: wdBody(2000000), status: 400 }),
+  withdrawToBank("Withdraw - under ₦100", wdBody(5000), { status: 422, checks: [["amount flagged", "Boolean(j.error.details.amount_minor)"]] }),
+  withdrawToBank("Withdraw - from a USD wallet", { ...wdBody(2000000), account_id: "{{wdUsdId}}" }, {
+    status: 422,
+    checks: [["NGN only", "Boolean(j.error.details.account_id)"]],
+  }),
+  withdrawToBank("Withdraw - to a bank account you haven't saved", { ...wdBody(2000000), bank_account_id: "00000000-0000-4000-8000-000000000000" }, {
+    status: 422,
+    checks: [["bank account flagged", "Boolean(j.error.details.bank_account_id)"]],
+  }),
+  balanceIs("Nothing moved yet (₦600,000)", "wdWalletId", "60000000"),
+
+  // a withdrawal that arrives
+  req("Withdraw ₦20,000", "POST", "/withdrawals", {
+    idem: "new:wdKey",
+    body: wdBody(2000000, { narration: "Rent" }),
+    status: 201,
+    save: [["wd1Id", "j.withdrawal_id"], ["wd1Ref", "j.reference"]],
+    checks: [
+      ["on its way, the fee shown", 'j.status === "pending" && j.fee_minor === 1343 && j.total_debited_minor === 2001343 && j.amount_minor === 2000000'],
+      ["to the saved account", 'j.bank_name === "Access Bank" && j.bank_account_number === "0690000031" && j.bank_account_name === "STAND-IN HOLDER 0031"'],
+    ],
+  }),
+  balanceIs("Wallet debited at once (amount + fee)", "wdWalletId", "57998657"),
+  req("Two debit alerts: the withdrawal and the fee", "GET", "/notifications?limit=2", {
+    status: 200,
+    checks: [["\"You withdrew ₦20,000.00\" to Access Bank, and \"Fee of ₦13.43\"", 'j.data.some((n) => n.title === "You withdrew ₦20,000.00" && n.body.includes("Access Bank")) && j.data.some((n) => n.title === "Fee of ₦13.43")']],
+  }),
+  req("Withdraw - same key again (a retry)", "POST", "/withdrawals", {
+    idem: "same:wdKey",
+    body: wdBody(2000000, { narration: "Rent" }),
+    status: 201,
+    checks: [["the same withdrawal, nothing sent twice", 'replayed && j.withdrawal_id === v("wd1Id")']],
+  }),
+  forgetKey("wdKey"),
+  req("Withdraw - retry after a lost reply", "POST", "/withdrawals", {
+    idem: "same:wdKey",
+    body: wdBody(2000000, { narration: "Rent" }),
+    status: 201,
+    checks: [["answered from the stored withdrawal", 'replayed && j.withdrawal_id === v("wd1Id")']],
+  }),
+  balanceIs("Still debited once", "wdWalletId", "57998657"),
+  transferWebhook("Webhook says SUCCESSFUL, but Flutterwave hasn't finished", "wd1Ref", "SUCCESSFUL"),
+  req("Not trusted: still pending", "GET", "/withdrawals/{{wd1Id}}", {
+    status: 200,
+    description: "The webhook body is only a hint; the API asked Flutterwave's transfer API, which still says NEW.",
+    checks: [["pending", 'j.status === "pending"']],
+  }),
+  standIn("Stand-in: the transfer arrives", "/_test/transfer-complete", { reference: "{{wd1Ref}}", status: "SUCCESSFUL" }),
+  req("Sync: successful", "POST", "/withdrawals/{{wd1Id}}/sync", {
+    status: 200,
+    checks: [["paid out", 'j.status === "successful" && j.completed_at !== null']],
+  }),
+
+  // a withdrawal that fails at the bank
+  withdrawToBank("Withdraw ₦10,000", wdBody(1000000), { status: 201, save: [["wd2Id", "j.withdrawal_id"], ["wd2Ref", "j.reference"]] }),
+  balanceIs("Debited ₦10,013.43", "wdWalletId", "56997314"),
+  standIn("Stand-in: the bank turns it down", "/_test/transfer-complete", { reference: "{{wd2Ref}}", status: "FAILED", complete_message: "Beneficiary account is dormant" }),
+  transferWebhook("Webhook: transfer.completed (FAILED)", "wd2Ref", "FAILED"),
+  req("Failed, with the bank's reason", "GET", "/withdrawals/{{wd2Id}}", {
+    status: 200,
+    checks: [["failed", 'j.status === "failed" && j.failure_reason === "Beneficiary account is dormant"']],
+  }),
+  balanceIs("Amount and fee back in the wallet", "wdWalletId", "57998657"),
+  req("Refund alerts say why", "GET", "/notifications?limit=2", {
+    status: 200,
+    checks: [["\"Refund of ₦10,000.00\" mentions the failed withdrawal", 'j.data.some((n) => n.title === "Refund of ₦10,000.00" && n.body.includes("failed"))']],
+  }),
+  transferWebhook("The same webhook again", "wd2Ref", "FAILED", { checks: [["acknowledged as a duplicate", "j.duplicate === true"]] }),
+  balanceIs("Refunded once", "wdWalletId", "57998657"),
+
+  // Flutterwave refuses at once, or can't be reached
+  transferMode("reject"),
+  withdrawToBank("Withdraw while Flutterwave refuses transfers", wdBody(1000000), {
+    status: 201,
+    checks: [["failed straight away, with Flutterwave's reason", 'j.status === "failed" && j.failure_reason.includes("Insufficient balance")']],
+  }),
+  balanceIs("Given straight back", "wdWalletId", "57998657"),
+  transferMode("down"),
+  withdrawToBank("Withdraw ₦5,000 while Flutterwave is down", wdBody(500000), {
+    status: 201,
+    save: [["wd4Id", "j.withdrawal_id"], ["wd4Ref", "j.reference"]],
+    checks: [["held, not failed: the outcome is unknown", 'j.status === "pending"']],
+  }),
+  transferMode("pending"),
+  req("Sync: sent now", "POST", "/withdrawals/{{wd4Id}}/sync", { status: 200, checks: [["still on its way", 'j.status === "pending"']] }),
+  standIn("Stand-in: it arrives", "/_test/transfer-complete", { reference: "{{wd4Ref}}", status: "SUCCESSFUL" }),
+  req("Sync: successful", "POST", "/withdrawals/{{wd4Id}}/sync", { status: 200, checks: [["paid out", 'j.status === "successful"']] }),
+
+  // the daily limit (failed withdrawals don't count)
+  req("Quote: ₦475,000 left today", "GET", "/withdrawals/quote?amount_minor=2000000", {
+    status: 200,
+    checks: [["₦20,000 + ₦5,000 used", "j.daily_remaining_minor === 47500000"]],
+  }),
+  withdrawToBank("Withdraw ₦480,000 (over today's limit)", wdBody(48000000), {
+    status: 422,
+    checks: [["says what's left", 'j.error.details.amount_minor[0].includes("₦475,000.00")']],
+  }),
+  concurrently("Concurrent: 3 withdrawals of ₦200,000 with ₦475,000 of today's limit left", {
+    count: 3,
+    method: "POST",
+    path: "/withdrawals",
+    bodyExpr: '{ account_id: pm.collectionVariables.get("wdWalletId"), bank_account_id: pm.collectionVariables.get("wdBankId"), amount_minor: 20000000 }',
+    expectExpr: `${count(null, 201)} === 2 && ${count(null, 422)} === 1`,
+    label: "two fit under the limit, the third is refused",
+    description: "Each withdrawal locks the customer while it checks the limit, so they queue and the third sees ₦75,000 left.",
+  }),
+
+  // housekeeping and other users
+  req("Withdrawals, newest first", "GET", "/withdrawals", {
+    status: 200,
+    checks: [["six, with their statuses", "j.data.length === 6 && j.data.filter((w) => w.status === \"failed\").length === 2"]],
+  }),
+  req("Remove the bank account", "DELETE", "/bank-accounts/{{wdBankId}}", { status: 200 }),
+  req("Saved bank accounts: none", "GET", "/bank-accounts", { status: 200, checks: [["empty", "j.data.length === 0"]] }),
+  req("A past withdrawal still shows where it went", "GET", "/withdrawals/{{wd1Id}}", {
+    status: 200,
+    checks: [["the bank account's details", 'j.bank_account_number === "0690000031"']],
+  }),
+  withdrawToBank("Withdraw to the removed account", wdBody(1000000), { status: 422 }),
+  ...newUser("wdOther", "another customer"),
+  req("Someone else's withdrawal", "GET", "/withdrawals/{{wd1Id}}", { status: 404 }),
+  req("Someone else's bank account", "DELETE", "/bank-accounts/{{wdBankId}}", { status: 404 }),
+  invariants(),
+];
+
 const wrapUp = [
   signIn("ada"),
   req("2FA: start setup (for the brute-force check)", "POST", "/auth/2fa/enable", { status: 200 }),
@@ -2973,7 +3167,8 @@ const main = collection(
     folder("13. Recurring billing", "Plans that invoice a client on a schedule: validation, a plan that starts today billing at once (number, pay link, email), the scheduled run (no double billing), catching up missed cycles, pausing (not billed while paused, resuming without back-billing), editing, a plan that can't bill saying why once, cancelling, listing, and other users. A fresh customer; the billing job is run through /dev/recurring/run.", recurring),
     folder("14. Savings goals", "Goals that hold real money in their own savings account: validation, contributions from a wallet (KYC, currency, insufficient funds, idempotent retries including a lost reply, a concurrent race), withdrawals, the goal's activity and alerts, the goal's account refusing transfers and direct closing, editing, closing (money back to a wallet, or empty), and other users. A fresh saver.", goals),
     folder("15. Payroll", "Paying other VergePay customers: adding payees by account number (KYC, validation, own wallet, duplicates), pay runs that are all or nothing (refusals before any money moves, insufficient funds, mixed currencies, inactive payees), idempotent retries including a lost reply, due dates by frequency, a concurrent race, and the payee's side (alert, balance, privacy, no reversal). Four fresh customers.", payroll),
-    folder("16. Wrap-up", "The 2FA brute-force limit, resetting the test users, and logout.", wrapUp),
+    folder("16. Withdrawals", "Withdrawing to a Nigerian bank account through Flutterwave Transfers (the stand-in): banks, name enquiry and saved accounts, the fee split (half each, the customer's rounded down), refusals before any money moves, the wallet debited at once, idempotent retries including a lost reply, a webhook that isn't trusted, success, a bank failure refunded with its reason, Flutterwave refusing or unreachable, the daily limit (and a concurrent race on it), removing a bank account, and other users. A fresh customer.", withdrawals),
+    folder("17. Wrap-up", "The 2FA brute-force limit, resetting the test users, and logout.", wrapUp),
   ],
 );
 
