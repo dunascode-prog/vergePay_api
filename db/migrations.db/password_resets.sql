@@ -20,10 +20,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_password_reset_live
     ON password_reset_codes(user_id) WHERE used_at IS NULL;
 
 -- Account emails (password reset codes, and confirming a new email address)
--- go through the same email log and queue as invoice emails.
+-- go through the same email log and queue as invoice emails. The list
+-- matches email_changes.sql, so re-running every migration in order never
+-- narrows it below rows that already exist.
 ALTER TABLE email_log DROP CONSTRAINT IF EXISTS email_log_kind_check;
 ALTER TABLE email_log ADD CONSTRAINT email_log_kind_check
-    CHECK (kind IN ('invoice', 'reminder', 'receipt', 'password_reset', 'email_change'));
+    CHECK (kind IN ('invoice', 'reminder', 'receipt', 'password_reset', 'email_change', 'email_changed'));
 
 -- when the password was last changed (by a reset, for now)
 ALTER TABLE users ADD COLUMN IF NOT EXISTS password_changed_at TIMESTAMPTZ;
