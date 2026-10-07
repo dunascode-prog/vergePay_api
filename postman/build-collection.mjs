@@ -776,6 +776,7 @@ const loanApplication = {
   term_months: 3,
   purpose: "Laptop for freelance work",
   auto_debit_consent: true,
+  terms_version: "loan-terms-v1",
 };
 
 const loans = [
@@ -784,6 +785,20 @@ const loans = [
   openAccount("Open loan account (personal wallet)", "loanAccountId"),
   openAccount("Open the repaying account (business wallet)", "receiverAccountId", { purpose: "business" }),
   req("Apply - term of 0 months", "POST", "/loans/applications", { body: { ...loanApplication, term_months: 0 }, status: 422 }),
+  req("The loan terms", "GET", "/loans/terms", {
+    status: 200,
+    checks: [["version and the numbers they quote", 'j.version === "loan-terms-v1" && j.grace_days === 3 && j.late_fee_bps === 500 && j.late_fee_min_minor === 50000 && j.default_after_days === 90']],
+  }),
+  req("Apply - without agreeing to the terms", "POST", "/loans/applications", {
+    body: { ...loanApplication, terms_version: undefined },
+    status: 422,
+    checks: [["terms flagged", "Boolean(j.error.details.terms_version)"]],
+  }),
+  req("Apply - agreed to terms that have changed since", "POST", "/loans/applications", {
+    body: { ...loanApplication, terms_version: "loan-terms-v0" },
+    status: 409,
+    checks: [["asks them to review the current terms", 'j.error.field === "terms_version"']],
+  }),
   req("Apply - without agreeing to automatic repayments", "POST", "/loans/applications", {
     body: { ...loanApplication, auto_debit_consent: false },
     status: 422,
@@ -811,7 +826,10 @@ const loans = [
   req("Apply again while one is pending", "POST", "/loans/applications", { body: loanApplication, status: 409 }),
   req("Get application status", "GET", "/loans/applications/{{applicationId}}", {
     status: 200,
-    checks: [["pending, no loan yet", 'j.status === "pending_review" && j.loan_id === null']],
+    checks: [
+      ["pending, no loan yet", 'j.status === "pending_review" && j.loan_id === null'],
+      ["records the terms agreed to, and when", 'j.terms_version === "loan-terms-v1" && j.auto_debit_consent === true && j.terms_accepted_at !== null'],
+    ],
   }),
   req("List my applications", "GET", "/loans/applications", {
     status: 200,
@@ -3051,6 +3069,7 @@ const lrApply = (accountVar, extra = {}) => ({
   currency_code: "NGN",
   term_months: 4,
   auto_debit_consent: true,
+  terms_version: "loan-terms-v1",
   ...extra,
 });
 const runLoanJobs = (name, checks = []) =>

@@ -4,6 +4,7 @@ import { withTransaction } from "../db/withTransaction.js";
 import env from "../env.js";
 import { buildSchedule, monthlyInstallment } from "../services/amortization.js";
 import { postOnce, postTransaction } from "../services/ledger.js";
+import { currentLoanTerms, LOAN_TERMS_VERSION } from "../services/loanTerms.js";
 import {
   checkRepaymentAmount,
   lockLoan,
@@ -62,6 +63,8 @@ const applicationSchema = z.strictObject({
   purpose: z.string().trim().min(1).max(255).optional(),
   // new loans are repaid automatically from the wallet; the borrower agrees
   auto_debit_consent: z.literal(true, { error: "Agree to automatic repayments to apply." }),
+  // the loan terms the borrower read and agreed to (GET /v1/loans/terms)
+  terms_version: z.string().trim().min(1).max(40),
 });
 
 const payoffSchema = z.strictObject({ source_account_id: z.uuid() });
@@ -107,6 +110,8 @@ const APPLICATION_COLUMNS = `
     a.term_months,
     a.purpose,
     a.auto_debit_consent,
+    a.terms_version,
+    a.terms_accepted_at,
     a.status,
     a.decision_reason,
     a.created_at AS submitted_at,
@@ -183,6 +188,14 @@ export async function applyForLoan(req, res) {
     }
     await loanHoldingAccountId(client, body.currency_code);
 
+    // agreed to terms that have since changed: they must read the new ones
+    if (body.terms_version !== LOAN_TERMS_VERSION) {
+      throw new ConflictError({
+        message: "The loan terms have changed since you agreed to them. Please review and agree to the current terms.",
+        field: "terms_version",
+      });
+    }
+
     const defaulted = await client.query(
       `SELECT 1 FROM loans l JOIN account acc ON acc.account_id = l.account_id
        WHERE acc.user_id = $1 AND l.loan_status = 'defaulted' LIMIT 1`,
@@ -197,9 +210,10 @@ export async function applyForLoan(req, res) {
       inserted = await client.query(
         `INSERT INTO loan_applications (
             user_id, account_id, loan_type, requested_amount_minor,
-            currency_code, term_months, purpose, auto_debit_consent
+            currency_code, term_months, purpose, auto_debit_consent,
+            terms_version, terms_accepted_at
          )
-         VALUES ($1, $2, $3, $4, $5, $6, $7, TRUE)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, TRUE, $8, NOW())
          RETURNING application_id, status, created_at AS submitted_at`,
         [
           userId,
@@ -209,6 +223,7 @@ export async function applyForLoan(req, res) {
           body.currency_code,
           body.term_months,
           body.purpose ?? null,
+          body.terms_version,
         ],
       );
     } catch (err) {
@@ -233,6 +248,13 @@ export async function applyForLoan(req, res) {
 
   // 202: the application is accepted for review, not decided (API doc 7.1).
   return res.status(202).json(application);
+}
+
+// GET /v1/loans/terms
+// The current loan terms' version and the numbers they quote, so the app
+// shows exactly what the borrower agrees to.
+export async function getLoanTerms(req, res) {
+  return res.status(200).json(currentLoanTerms());
 }
 
 // GET /v1/loans/applications/:applicationId

@@ -5199,7 +5199,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"account_id\": \"{{loanAccountId}}\",\n  \"loan_type\": \"personal\",\n  \"requested_amount_minor\": 1500000,\n  \"currency_code\": \"NGN\",\n  \"term_months\": 0,\n  \"purpose\": \"Laptop for freelance work\",\n  \"auto_debit_consent\": true\n}",
+              "raw": "{\n  \"account_id\": \"{{loanAccountId}}\",\n  \"loan_type\": \"personal\",\n  \"requested_amount_minor\": 1500000,\n  \"currency_code\": \"NGN\",\n  \"term_months\": 0,\n  \"purpose\": \"Laptop for freelance work\",\n  \"auto_debit_consent\": true,\n  \"terms_version\": \"loan-terms-v1\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -5207,6 +5207,145 @@
               }
             },
             "description": "**Expect:** 422"
+          }
+        },
+        {
+          "name": "The loan terms",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"version and the numbers they quote\", () => pm.expect(j.version === \"loan-terms-v1\" && j.grace_days === 3 && j.late_fee_bps === 500 && j.late_fee_min_minor === 50000 && j.default_after_days === 90, \"version and the numbers they quote\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/loans/terms",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "loans",
+                "terms"
+              ]
+            },
+            "description": "**Expect:** 200\n\n**Checks:**\n- version and the numbers they quote"
+          }
+        },
+        {
+          "name": "Apply - without agreeing to the terms",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 422\", () => pm.response.to.have.status(422));",
+                  "pm.test(\"terms flagged\", () => pm.expect(Boolean(j.error.details.terms_version), \"terms flagged\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/loans/applications",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "loans",
+                "applications"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"account_id\": \"{{loanAccountId}}\",\n  \"loan_type\": \"personal\",\n  \"requested_amount_minor\": 1500000,\n  \"currency_code\": \"NGN\",\n  \"term_months\": 3,\n  \"purpose\": \"Laptop for freelance work\",\n  \"auto_debit_consent\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "**Expect:** 422\n\n**Checks:**\n- terms flagged"
+          }
+        },
+        {
+          "name": "Apply - agreed to terms that have changed since",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 409\", () => pm.response.to.have.status(409));",
+                  "pm.test(\"asks them to review the current terms\", () => pm.expect(j.error.field === \"terms_version\", \"asks them to review the current terms\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/loans/applications",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "loans",
+                "applications"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"account_id\": \"{{loanAccountId}}\",\n  \"loan_type\": \"personal\",\n  \"requested_amount_minor\": 1500000,\n  \"currency_code\": \"NGN\",\n  \"term_months\": 3,\n  \"purpose\": \"Laptop for freelance work\",\n  \"auto_debit_consent\": true,\n  \"terms_version\": \"loan-terms-v0\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "**Expect:** 409\n\n**Checks:**\n- asks them to review the current terms"
           }
         },
         {
@@ -5250,7 +5389,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"account_id\": \"{{loanAccountId}}\",\n  \"loan_type\": \"personal\",\n  \"requested_amount_minor\": 1500000,\n  \"currency_code\": \"NGN\",\n  \"term_months\": 3,\n  \"purpose\": \"Laptop for freelance work\",\n  \"auto_debit_consent\": false\n}",
+              "raw": "{\n  \"account_id\": \"{{loanAccountId}}\",\n  \"loan_type\": \"personal\",\n  \"requested_amount_minor\": 1500000,\n  \"currency_code\": \"NGN\",\n  \"term_months\": 3,\n  \"purpose\": \"Laptop for freelance work\",\n  \"auto_debit_consent\": false,\n  \"terms_version\": \"loan-terms-v1\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -5300,7 +5439,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"account_id\": \"{{loanAccountId}}\",\n  \"loan_type\": \"personal\",\n  \"requested_amount_minor\": 1500000,\n  \"currency_code\": \"USD\",\n  \"term_months\": 3,\n  \"purpose\": \"Laptop for freelance work\",\n  \"auto_debit_consent\": true\n}",
+              "raw": "{\n  \"account_id\": \"{{loanAccountId}}\",\n  \"loan_type\": \"personal\",\n  \"requested_amount_minor\": 1500000,\n  \"currency_code\": \"USD\",\n  \"term_months\": 3,\n  \"purpose\": \"Laptop for freelance work\",\n  \"auto_debit_consent\": true,\n  \"terms_version\": \"loan-terms-v1\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -5350,7 +5489,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"account_id\": \"00000000-0000-4000-8000-000000000000\",\n  \"loan_type\": \"personal\",\n  \"requested_amount_minor\": 1500000,\n  \"currency_code\": \"NGN\",\n  \"term_months\": 3,\n  \"purpose\": \"Laptop for freelance work\",\n  \"auto_debit_consent\": true\n}",
+              "raw": "{\n  \"account_id\": \"00000000-0000-4000-8000-000000000000\",\n  \"loan_type\": \"personal\",\n  \"requested_amount_minor\": 1500000,\n  \"currency_code\": \"NGN\",\n  \"term_months\": 3,\n  \"purpose\": \"Laptop for freelance work\",\n  \"auto_debit_consent\": true,\n  \"terms_version\": \"loan-terms-v1\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -5415,7 +5554,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"account_id\": \"{{loanAccountId}}\",\n  \"loan_type\": \"personal\",\n  \"requested_amount_minor\": 1500000,\n  \"currency_code\": \"NGN\",\n  \"term_months\": 3,\n  \"purpose\": \"Laptop for freelance work\",\n  \"auto_debit_consent\": true\n}",
+              "raw": "{\n  \"account_id\": \"{{loanAccountId}}\",\n  \"loan_type\": \"personal\",\n  \"requested_amount_minor\": 1500000,\n  \"currency_code\": \"NGN\",\n  \"term_months\": 3,\n  \"purpose\": \"Laptop for freelance work\",\n  \"auto_debit_consent\": true,\n  \"terms_version\": \"loan-terms-v1\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -5470,7 +5609,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"account_id\": \"{{loanAccountId}}\",\n  \"loan_type\": \"personal\",\n  \"requested_amount_minor\": 1500000,\n  \"currency_code\": \"NGN\",\n  \"term_months\": 3,\n  \"purpose\": \"Laptop for freelance work\",\n  \"auto_debit_consent\": true\n}",
+              "raw": "{\n  \"account_id\": \"{{loanAccountId}}\",\n  \"loan_type\": \"personal\",\n  \"requested_amount_minor\": 1500000,\n  \"currency_code\": \"NGN\",\n  \"term_months\": 3,\n  \"purpose\": \"Laptop for freelance work\",\n  \"auto_debit_consent\": true,\n  \"terms_version\": \"loan-terms-v1\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -5520,7 +5659,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"account_id\": \"{{loanAccountId}}\",\n  \"loan_type\": \"personal\",\n  \"requested_amount_minor\": 1500000,\n  \"currency_code\": \"NGN\",\n  \"term_months\": 3,\n  \"purpose\": \"Laptop for freelance work\",\n  \"auto_debit_consent\": true\n}",
+              "raw": "{\n  \"account_id\": \"{{loanAccountId}}\",\n  \"loan_type\": \"personal\",\n  \"requested_amount_minor\": 1500000,\n  \"currency_code\": \"NGN\",\n  \"term_months\": 3,\n  \"purpose\": \"Laptop for freelance work\",\n  \"auto_debit_consent\": true,\n  \"terms_version\": \"loan-terms-v1\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -5546,7 +5685,8 @@
                   "const errorMessage = (j.error && j.error.message) || \"\";",
                   "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
                   "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
-                  "pm.test(\"pending, no loan yet\", () => pm.expect(j.status === \"pending_review\" && j.loan_id === null, \"pending, no loan yet\").to.be.true);"
+                  "pm.test(\"pending, no loan yet\", () => pm.expect(j.status === \"pending_review\" && j.loan_id === null, \"pending, no loan yet\").to.be.true);",
+                  "pm.test(\"records the terms agreed to, and when\", () => pm.expect(j.terms_version === \"loan-terms-v1\" && j.auto_debit_consent === true && j.terms_accepted_at !== null, \"records the terms agreed to, and when\").to.be.true);"
                 ]
               }
             }
@@ -5565,7 +5705,7 @@
                 "{{applicationId}}"
               ]
             },
-            "description": "**Expect:** 200\n\n**Checks:**\n- pending, no loan yet"
+            "description": "**Expect:** 200\n\n**Checks:**\n- pending, no loan yet\n- records the terms agreed to, and when"
           }
         },
         {
@@ -7495,7 +7635,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"account_id\": \"{{receiverAccountId}}\",\n  \"loan_type\": \"personal\",\n  \"requested_amount_minor\": 1500000,\n  \"currency_code\": \"NGN\",\n  \"term_months\": 3,\n  \"purpose\": \"Laptop for freelance work\",\n  \"auto_debit_consent\": true\n}",
+              "raw": "{\n  \"account_id\": \"{{receiverAccountId}}\",\n  \"loan_type\": \"personal\",\n  \"requested_amount_minor\": 1500000,\n  \"currency_code\": \"NGN\",\n  \"term_months\": 3,\n  \"purpose\": \"Laptop for freelance work\",\n  \"auto_debit_consent\": true,\n  \"terms_version\": \"loan-terms-v1\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -42340,7 +42480,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"account_id\": \"{{lrWalletId}}\",\n  \"loan_type\": \"personal\",\n  \"requested_amount_minor\": 4000000,\n  \"currency_code\": \"NGN\",\n  \"term_months\": 4,\n  \"auto_debit_consent\": true\n}",
+              "raw": "{\n  \"account_id\": \"{{lrWalletId}}\",\n  \"loan_type\": \"personal\",\n  \"requested_amount_minor\": 4000000,\n  \"currency_code\": \"NGN\",\n  \"term_months\": 4,\n  \"auto_debit_consent\": true,\n  \"terms_version\": \"loan-terms-v1\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -44004,7 +44144,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"account_id\": \"{{lrBizId}}\",\n  \"loan_type\": \"personal\",\n  \"requested_amount_minor\": 4000000,\n  \"currency_code\": \"NGN\",\n  \"term_months\": 4,\n  \"auto_debit_consent\": true\n}",
+              "raw": "{\n  \"account_id\": \"{{lrBizId}}\",\n  \"loan_type\": \"personal\",\n  \"requested_amount_minor\": 4000000,\n  \"currency_code\": \"NGN\",\n  \"term_months\": 4,\n  \"auto_debit_consent\": true,\n  \"terms_version\": \"loan-terms-v1\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -44222,7 +44362,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"account_id\": \"{{lrBizId}}\",\n  \"loan_type\": \"personal\",\n  \"requested_amount_minor\": 3000000,\n  \"currency_code\": \"NGN\",\n  \"term_months\": 3,\n  \"auto_debit_consent\": true\n}",
+              "raw": "{\n  \"account_id\": \"{{lrBizId}}\",\n  \"loan_type\": \"personal\",\n  \"requested_amount_minor\": 3000000,\n  \"currency_code\": \"NGN\",\n  \"term_months\": 3,\n  \"auto_debit_consent\": true,\n  \"terms_version\": \"loan-terms-v1\"\n}",
               "options": {
                 "raw": {
                   "language": "json"

@@ -6,6 +6,7 @@ import {
   getLoan,
   getLoanApplication,
   getLoanSchedule,
+  getLoanTerms,
   getPayoffQuote,
   listLoanApplications,
   listLoans,
@@ -23,6 +24,8 @@ import { moneyLimiter } from "../utils/rateLimiters.js";
 // "Admin or System" and use the internal API key instead (API doc 7.2).
 const loanRouter = express.Router();
 
+// before /:loanId, so "terms" isn't read as a loan id
+loanRouter.get("/terms", verifyAccessToken, getLoanTerms);
 loanRouter.post("/applications", verifyAccessToken, optionalIdempotency, applyForLoan);
 loanRouter.get("/applications", verifyAccessToken, listLoanApplications);
 loanRouter.get("/applications/:applicationId", verifyAccessToken, getLoanApplication);
