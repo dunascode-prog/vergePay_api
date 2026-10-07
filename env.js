@@ -129,6 +129,20 @@ const env = {
   internalApiKey: process.env.INTERNAL_API_KEY,
   // 64 hex characters; encrypts TOTP secrets at rest (utils/secretBox.js)
   twoFactorEncryptionKey: process.env.TWO_FACTOR_ENCRYPTION_KEY,
+  // Loan repayment rules (services/loanRepayments.js, services/loanJobs.js).
+  // Amounts in minor units; 500 bps = 5% of the late installment.
+  loans: {
+    graceDays: parseInt(process.env.LOAN_GRACE_DAYS, 10) || 3,
+    lateFeeBps: parseInt(process.env.LOAN_LATE_FEE_BPS, 10) || 500,
+    lateFeeMinMinor: parseInt(process.env.LOAN_LATE_FEE_MIN_MINOR, 10) || 50_000,
+    defaultAfterDays: parseInt(process.env.LOAN_DEFAULT_AFTER_DAYS, 10) || 90,
+    // the smallest payment, unless what's left is less
+    minRepaymentMinor: parseInt(process.env.LOAN_MIN_REPAYMENT_MINOR, 10) || 10_000,
+    // at most one "couldn't collect your repayment" alert this often
+    autoDebitAlertEveryDays: parseInt(process.env.LOAN_AUTO_DEBIT_ALERT_DAYS, 10) || 3,
+    // how often the worker runs auto-debits, late fees and defaults
+    jobIntervalMs: parseInt(process.env.LOAN_JOB_INTERVAL_MS, 10) || 60 * 60 * 1000,
+  },
   // Withdrawals to bank accounts (services/payouts.js). Amounts in kobo:
   // ₦500,000 a day per customer (Lagos day, failed ones don't count), ₦100
   // at least each time.

@@ -30,10 +30,9 @@ ALTER TABLE loan_repayment_schedule ADD COLUMN IF NOT EXISTS interest_minor BIGI
 CREATE UNIQUE INDEX IF NOT EXISTS uq_schedule_installment
     ON loan_repayment_schedule(loan_id, installment_number);
 
--- One repayment transaction pays exactly one installment.
-CREATE UNIQUE INDEX IF NOT EXISTS uq_schedule_paid_txn
-    ON loan_repayment_schedule(paid_transaction_id)
-    WHERE paid_transaction_id IS NOT NULL;
+-- (One repayment used to pay exactly one installment, with a unique index
+-- on paid_transaction_id. Since loan_rules.sql one payment can finish
+-- several installments, so that index is no longer created here.)
 
 DO $$ BEGIN
     ALTER TABLE loan_repayment_schedule
@@ -44,10 +43,5 @@ DO $$ BEGIN
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 
--- paid_flag and paid_transaction_id always agree.
-DO $$ BEGIN
-    ALTER TABLE loan_repayment_schedule
-        ADD CONSTRAINT schedule_paid_consistent
-        CHECK (paid_flag = (paid_transaction_id IS NOT NULL));
-EXCEPTION WHEN duplicate_object THEN NULL;
-END $$;
+-- (paid_flag is checked against the installment's paid parts in
+-- loan_rules.sql, which replaced the schedule_paid_consistent check.)

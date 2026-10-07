@@ -1,8 +1,17 @@
 import z from "zod";
 import { pool } from "../db/connectDB.js";
 import { withTransaction } from "../db/withTransaction.js";
+import env from "../env.js";
 import { buildSchedule, monthlyInstallment } from "../services/amortization.js";
 import { postOnce, postTransaction } from "../services/ledger.js";
+import {
+  checkRepaymentAmount,
+  lockLoan,
+  lockSchedule,
+  paymentResponse,
+  payoffQuote,
+  postRepayment,
+} from "../services/loanRepayments.js";
 import { writeAudit } from "../utils/audit.js";
 import {
   BadRequestError,
@@ -17,6 +26,10 @@ import { isUuid, validationDetails } from "../utils/validation.js";
 //
 //   application: pending_review -> approved | rejected       (a request for credit)
 //   loan:        approved -> active -> repaid                (created on approval)
+//                active <-> defaulted                       (90 days overdue; back once caught up)
+//
+// Repayments, payoffs, late fees and auto-debit: services/loanRepayments.js
+// and services/loanJobs.js.
 //
 // Money only moves at disbursement and repayment, and both post through the
 // same ledger routine as a transfer. The other side of both is the
@@ -47,7 +60,12 @@ const applicationSchema = z.strictObject({
   currency_code: z.string().trim().toUpperCase().length(3),
   term_months: termMonths,
   purpose: z.string().trim().min(1).max(255).optional(),
+  // new loans are repaid automatically from the wallet; the borrower agrees
+  auto_debit_consent: z.literal(true, { error: "Agree to automatic repayments to apply." }),
 });
+
+const payoffSchema = z.strictObject({ source_account_id: z.uuid() });
+const autoDebitSchema = z.strictObject({ enabled: z.boolean() });
 
 // The underwriter sets the rate and may lend less, or over a different
 // term, than was asked for.
@@ -88,6 +106,7 @@ const APPLICATION_COLUMNS = `
     a.currency_code,
     a.term_months,
     a.purpose,
+    a.auto_debit_consent,
     a.status,
     a.decision_reason,
     a.created_at AS submitted_at,
@@ -105,6 +124,8 @@ const LOAN_COLUMNS = `
     l.currency_code,
     l.balance_remaining_minor,
     l.loan_status,
+    l.auto_debit,
+    l.defaulted_at,
     l.disbursed_at,
     l.created_at`;
 
@@ -162,14 +183,23 @@ export async function applyForLoan(req, res) {
     }
     await loanHoldingAccountId(client, body.currency_code);
 
+    const defaulted = await client.query(
+      `SELECT 1 FROM loans l JOIN account acc ON acc.account_id = l.account_id
+       WHERE acc.user_id = $1 AND l.loan_status = 'defaulted' LIMIT 1`,
+      [userId],
+    );
+    if (defaulted.rowCount > 0) {
+      throw new ConflictError({ message: "You have a loan in default. Catch up on it before applying for another." });
+    }
+
     let inserted;
     try {
       inserted = await client.query(
         `INSERT INTO loan_applications (
             user_id, account_id, loan_type, requested_amount_minor,
-            currency_code, term_months, purpose
+            currency_code, term_months, purpose, auto_debit_consent
          )
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, TRUE)
          RETURNING application_id, status, created_at AS submitted_at`,
         [
           userId,
@@ -235,21 +265,37 @@ export async function listLoanApplications(req, res) {
   return res.status(200).json({ data: result.rows });
 }
 
-// A borrower's loans, and one of them, with the next installment due.
+// What's still owed on one installment row `s`.
+const OWED = `(s.late_fee_minor - s.late_fee_paid_minor + s.interest_minor - s.interest_paid_minor
+               - s.interest_waived_minor + s.principal_minor - s.principal_paid_minor)`;
+
+// A borrower's loans, and one of them, with the next installment, what's
+// due now (in the borrower's timezone) and how late it is.
 const LOAN_WITH_PROGRESS = `
     SELECT ${LOAN_COLUMNS},
            (SELECT count(*)::int FROM loan_repayment_schedule s
             WHERE s.loan_id = l.loan_id AND s.paid_flag) AS installments_paid,
+           (SELECT count(*)::int FROM loan_repayment_schedule s
+            WHERE s.loan_id = l.loan_id) AS installments_total,
            (SELECT json_build_object(
                      'installment_number', s.installment_number,
                      'due_date', to_char(s.due_date, 'YYYY-MM-DD'),
-                     'installment_amount_minor', s.installment_amount_minor)
+                     'installment_amount_minor', s.installment_amount_minor,
+                     'remaining_minor', ${OWED})
             FROM loan_repayment_schedule s
             WHERE s.loan_id = l.loan_id AND NOT s.paid_flag
             ORDER BY s.installment_number
-            LIMIT 1) AS next_installment
+            LIMIT 1) AS next_installment,
+           (SELECT COALESCE(sum(${OWED}), 0)::bigint FROM loan_repayment_schedule s
+            WHERE s.loan_id = l.loan_id AND NOT s.paid_flag AND s.due_date <= d.today) AS amount_due_now_minor,
+           (SELECT COALESCE(sum(s.late_fee_minor - s.late_fee_paid_minor), 0)::bigint FROM loan_repayment_schedule s
+            WHERE s.loan_id = l.loan_id) AS late_fees_owed_minor,
+           (SELECT d.today - min(s.due_date) FROM loan_repayment_schedule s
+            WHERE s.loan_id = l.loan_id AND NOT s.paid_flag AND s.due_date < d.today) AS days_overdue
     FROM loans l
-    JOIN account acc ON acc.account_id = l.account_id`;
+    JOIN account acc ON acc.account_id = l.account_id
+    JOIN users u ON u.user_id = acc.user_id
+    CROSS JOIN LATERAL (SELECT (NOW() AT TIME ZONE u.timezone)::date AS today) d`;
 
 // GET /v1/loans
 export async function listLoans(req, res) {
@@ -294,7 +340,15 @@ export async function getLoanSchedule(req, res) {
             installment_amount_minor,
             principal_minor,
             interest_minor,
+            principal_paid_minor,
+            interest_paid_minor,
+            interest_waived_minor,
+            late_fee_minor,
+            late_fee_paid_minor,
+            (late_fee_minor - late_fee_paid_minor + interest_minor - interest_paid_minor - interest_waived_minor
+             + principal_minor - principal_paid_minor) AS remaining_minor,
             paid_flag,
+            paid_at,
             paid_transaction_id
      FROM loan_repayment_schedule
      WHERE loan_id = $1
@@ -304,39 +358,47 @@ export async function getLoanSchedule(req, res) {
   return res.status(200).json({ loan_id: loanId, data: schedule.rows });
 }
 
-// The repayment response, rebuilt from what was committed so a replay
-// returns the same body. Installments are paid strictly in order, so the
-// balance right after installment k is the sum of the installments after k.
-async function repaymentResponse(db, transaction) {
-  const result = await db.query(
-    `SELECT s.installment_number,
-            (SELECT COALESCE(sum(later.installment_amount_minor), 0)::bigint
-             FROM loan_repayment_schedule later
-             WHERE later.loan_id = s.loan_id
-               AND later.installment_number > s.installment_number) AS balance_after
-     FROM loan_repayment_schedule s
-     WHERE s.paid_transaction_id = $1`,
-    [transaction.transaction_id],
-  );
-  const row = result.rows[0];
-  return {
-    transaction_id: transaction.transaction_id,
-    loan_id: transaction.loan_id,
-    amount_minor: transaction.amount_minor,
-    status: transaction.status,
-    schedule_installment_marked_paid: row.installment_number,
-    new_balance_remaining_minor: row.balance_after,
-  };
+// The loan, owned by the caller, locked with its schedule. 404 otherwise.
+async function lockOwnLoan(client, loanId, userId) {
+  if (!isUuid(loanId)) throw loanNotFound();
+  const loan = await lockLoan(client, loanId);
+  if (!loan || loan.user_id !== userId) throw loanNotFound();
+  return { loan, rows: await lockSchedule(client, loanId) };
 }
 
-// POST /v1/loans/:loanId/repayments
-// Pays the next unpaid installment, in full. In one DB transaction it posts
-// the ledger pair (borrower's account -> loan-holding account), marks the
-// installment paid and lowers the balance, closing the loan on the last
-// installment (API doc 7.4).
+function requireRepayable(loan) {
+  if (!["active", "defaulted"].includes(loan.loan_status)) {
+    throw new ConflictError({ message: `Can't repay a loan that is ${loan.loan_status}.` });
+  }
+}
+
+async function checkSource(client, userId, accountId) {
+  const source = await client.query(
+    `SELECT 1 FROM account WHERE account_id = $1 AND user_id = $2 AND NOT is_system`,
+    [accountId, userId],
+  );
+  if (source.rowCount === 0) {
+    throw new ValidationError({ details: { source_account_id: ["Account not found."] } });
+  }
+}
+
+// GET /v1/loans/:loanId/payoff
+// What paying the loan off today would cost, and the interest it saves.
+export async function getPayoffQuote(req, res) {
+  const quote = await withTransaction(async (client) => {
+    const { loan, rows } = await lockOwnLoan(client, req.params.loanId, req.user.sub);
+    requireRepayable(loan);
+    return payoffQuote(loan, rows, loan.today);
+  });
+  return res.status(200).json({ loan_id: req.params.loanId, ...quote });
+}
+
+// POST /v1/loans/:loanId/repayments  { source_account_id, amount_minor }
+// Any amount from the minimum up to the payoff total (services/loanRepayments.js
+// has the order it's applied in). Paying exactly the payoff total pays the
+// loan off. Idempotent; the loan row is locked, so payments queue.
 export async function repayLoan(req, res) {
   const { loanId } = req.params;
-  if (!isUuid(loanId)) throw loanNotFound();
   const body = parseBody(repaymentSchema, req.body);
   const userId = req.user.sub;
   const idempotencyKey = `${userId}:${req.idempotencyKey}`;
@@ -348,90 +410,87 @@ export async function repayLoan(req, res) {
     existing.amount_minor === body.amount_minor;
 
   const { transaction, replayed } = await postOnce(idempotencyKey, async (client) => {
-    const found = await client.query(
-      `SELECT l.loan_id, l.loan_status, l.currency_code, l.balance_remaining_minor
-       FROM loans l JOIN account acc ON acc.account_id = l.account_id
-       WHERE l.loan_id = $1 AND acc.user_id = $2
-       FOR UPDATE OF l`,
-      [loanId, userId],
-    );
-    const loan = found.rows[0];
-    if (!loan) throw loanNotFound();
-    if (loan.loan_status !== "active") {
-      throw new ConflictError({
-        message: `Can't repay a loan that is ${loan.loan_status}.`,
-      });
-    }
-
-    const source = await client.query(
-      `SELECT currency_code FROM account
-       WHERE account_id = $1 AND user_id = $2 AND NOT is_system`,
-      [body.source_account_id, userId],
-    );
-    if (source.rowCount === 0) {
-      throw new ValidationError({ details: { source_account_id: ["Account not found."] } });
-    }
-
-    const next = await client.query(
-      `SELECT schedule_id, installment_number, installment_amount_minor
-       FROM loan_repayment_schedule
-       WHERE loan_id = $1 AND NOT paid_flag
-       ORDER BY installment_number
-       LIMIT 1`,
-      [loanId],
-    );
-    const installment = next.rows[0];
-    if (body.amount_minor !== installment.installment_amount_minor) {
-      throw new ValidationError({
-        details: {
-          amount_minor: [
-            `Installment ${installment.installment_number} is due: pay exactly ${installment.installment_amount_minor}.`,
-          ],
-        },
-      });
-    }
-
-    // postTransaction checks the source is active, in the loan's currency
-    // and can afford it.
-    const posted = await postTransaction(client, {
-      transactionType: "loan_repayment",
-      senderAccountId: body.source_account_id,
-      receiverAccountId: await loanHoldingAccountId(client, loan.currency_code),
+    const { loan, rows } = await lockOwnLoan(client, loanId, userId);
+    requireRepayable(loan);
+    await checkSource(client, userId, body.source_account_id);
+    const quote = payoffQuote(loan, rows, loan.today);
+    checkRepaymentAmount(body.amount_minor, quote, env.loans.minRepaymentMinor);
+    // postTransaction checks the source is active, in the loan's currency and can afford it
+    return postRepayment(client, {
+      loan,
+      rows,
+      sourceAccountId: body.source_account_id,
       amountMinor: body.amount_minor,
-      currencyCode: loan.currency_code,
-      description: `Loan repayment, installment ${installment.installment_number}`,
+      kind: body.amount_minor === quote.total_minor ? "payoff" : "repayment",
       idempotencyKey,
-      loanId,
+      holdingAccountId: await loanHoldingAccountId(client, loan.currency_code),
     });
-
-    await client.query(
-      `UPDATE loan_repayment_schedule
-       SET paid_flag = TRUE, paid_transaction_id = $2
-       WHERE schedule_id = $1`,
-      [installment.schedule_id, posted.transaction_id],
-    );
-
-    const balanceAfter = loan.balance_remaining_minor - body.amount_minor;
-    const statusAfter = balanceAfter === 0 ? "repaid" : "active";
-    await client.query(
-      `UPDATE loans SET balance_remaining_minor = $2, loan_status = $3 WHERE loan_id = $1`,
-      [loanId, balanceAfter, statusAfter],
-    );
-    if (statusAfter === "repaid") {
-      await writeAudit(client, {
-        actorId: userId,
-        entityType: "loan",
-        entityId: loanId,
-        action: "status_change",
-        before: { loan_status: "active" },
-        after: { loan_status: "repaid" },
-      });
-    }
-    return posted;
   }, isSameRepayment);
 
   if (replayed) res.set("Idempotent-Replayed", "true");
-  return res.status(201).json(await repaymentResponse(pool, transaction));
+  return res.status(201).json(await paymentResponse(pool, transaction.transaction_id));
+}
+
+// POST /v1/loans/:loanId/payoff  { source_account_id }
+// Pays the loan off: the payoff total, worked out now (GET /payoff shows it).
+export async function payOffLoan(req, res) {
+  const { loanId } = req.params;
+  const body = parseBody(payoffSchema, req.body);
+  const userId = req.user.sub;
+  const idempotencyKey = `${userId}:${req.idempotencyKey}`;
+
+  const isSamePayoff = (existing) =>
+    existing.transaction_type === "loan_repayment" &&
+    existing.loan_id === loanId &&
+    existing.sender_account_id === body.source_account_id;
+
+  const { transaction, replayed } = await postOnce(idempotencyKey, async (client) => {
+    const { loan, rows } = await lockOwnLoan(client, loanId, userId);
+    requireRepayable(loan);
+    await checkSource(client, userId, body.source_account_id);
+    const quote = payoffQuote(loan, rows, loan.today);
+    return postRepayment(client, {
+      loan,
+      rows,
+      sourceAccountId: body.source_account_id,
+      amountMinor: quote.total_minor,
+      kind: "payoff",
+      idempotencyKey,
+      holdingAccountId: await loanHoldingAccountId(client, loan.currency_code),
+    });
+  }, isSamePayoff);
+
+  if (replayed) res.set("Idempotent-Replayed", "true");
+  return res.status(201).json(await paymentResponse(pool, transaction.transaction_id));
+}
+
+// PATCH /v1/loans/:loanId/auto-debit  { enabled }
+// The borrower switches automatic repayments on or off. When on, the worker
+// collects what's due from the loan's wallet on the due date and daily after.
+export async function setAutoDebit(req, res) {
+  const body = parseBody(autoDebitSchema, req.body);
+  const userId = req.user.sub;
+  await withTransaction(async (client) => {
+    const { loan } = await lockOwnLoan(client, req.params.loanId, userId);
+    if (["repaid", "rejected"].includes(loan.loan_status)) {
+      throw new ConflictError({ message: `This loan is ${loan.loan_status}.` });
+    }
+    if (loan.auto_debit === body.enabled) return;
+    await client.query(
+      `UPDATE loans SET auto_debit = $2, auto_debit_last_attempt_on = NULL WHERE loan_id = $1`,
+      [loan.loan_id, body.enabled],
+    );
+    await writeAudit(client, {
+      actorId: userId,
+      entityType: "loan",
+      entityId: loan.loan_id,
+      action: "update",
+      before: { auto_debit: loan.auto_debit },
+      after: { auto_debit: body.enabled },
+    });
+  });
+  const result = await pool.query(`${LOAN_WITH_PROGRESS} WHERE l.loan_id = $1`, [req.params.loanId]);
+  return res.status(200).json(result.rows[0]);
 }
 
 // ---------------------------------------------------------------------------
@@ -476,9 +535,9 @@ export function approveApplication(applicationId, body) {
       `INSERT INTO loans (
           application_id, account_id, loan_type, principal_minor,
           interest_rate_bps, term_months, currency_code,
-          balance_remaining_minor, loan_status
+          balance_remaining_minor, loan_status, auto_debit
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, 0, 'approved')
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 0, 'approved', $8)
        RETURNING loan_id, loan_status`,
       [
         application.application_id,
@@ -488,6 +547,7 @@ export function approveApplication(applicationId, body) {
         body.interest_rate_bps,
         term,
         application.currency_code,
+        application.auto_debit_consent,
       ],
     );
     await client.query(
