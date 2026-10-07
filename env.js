@@ -129,6 +129,15 @@ const env = {
   internalApiKey: process.env.INTERNAL_API_KEY,
   // 64 hex characters; encrypts TOTP secrets at rest (utils/secretBox.js)
   twoFactorEncryptionKey: process.env.TWO_FACTOR_ENCRYPTION_KEY,
+  // Withdrawals to bank accounts (services/payouts.js). Amounts in kobo:
+  // ₦500,000 a day per customer (Lagos day, failed ones don't count), ₦100
+  // at least each time.
+  withdrawals: {
+    dailyLimitMinor: parseInt(process.env.WITHDRAWAL_DAILY_LIMIT_MINOR, 10) || 50_000_000,
+    minMinor: parseInt(process.env.WITHDRAWAL_MIN_MINOR, 10) || 10_000,
+    // how often the worker re-checks withdrawals Flutterwave hasn't confirmed
+    syncIntervalMs: parseInt(process.env.WITHDRAWAL_SYNC_INTERVAL_MS, 10) || 5 * 60 * 1000,
+  },
   // Flutterwave (services/flutterwave.js). Card and bank-transfer funding
   // are off until FLW_SECRET_KEY is set.
   flutterwave: {

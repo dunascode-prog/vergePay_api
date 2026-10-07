@@ -13,12 +13,15 @@ import logger from "./logger.js";
 import { BrokerageAuthError } from "./services/alpaca.js";
 import { dueLinkIds, expireLink, setSyncStatus, syncLink } from "./services/brokerageSync.js";
 import { deliverEmail } from "./services/email.js";
+import { syncPendingWithdrawals } from "./services/payouts.js";
 import {
   BROKERAGE_QUEUE,
   EMAIL_QUEUE,
+  PAYOUT_QUEUE,
   RECURRING_QUEUE,
   brokerageQueue,
   enqueueLinkSync,
+  payoutsQueue,
   recurringQueue,
   redisConnection,
 } from "./services/queue.js";
@@ -119,9 +122,29 @@ await recurringQueue().upsertJobScheduler(
   { name: "bill-due-plans", opts: { attempts: 1, removeOnComplete: true, removeOnFail: true } },
 );
 
+// Withdrawals Flutterwave hasn't confirmed yet (no webhook, or a lost reply).
+const payoutWorker = new Worker(
+  PAYOUT_QUEUE,
+  async (job) => {
+    if (job.name !== "sync-pending-withdrawals") throw new UnrecoverableError(`Unknown job ${job.name}`);
+    const result = await syncPendingWithdrawals();
+    if (result.checked) logger.info({ message: "pending withdrawals checked", ...result });
+    return result;
+  },
+  { connection: redisConnection(), concurrency: 1, drainDelay: 30, stalledInterval: 120_000 },
+);
+payoutWorker.on("ready", () => console.log(`worker ready: ${PAYOUT_QUEUE}, every ${env.withdrawals.syncIntervalMs / 1000}s`));
+payoutWorker.on("error", (err) => logger.error({ message: "payout worker error", error: err.message }));
+
+await payoutsQueue().upsertJobScheduler(
+  "sync-pending-withdrawals",
+  { every: env.withdrawals.syncIntervalMs },
+  { name: "sync-pending-withdrawals", opts: { attempts: 1, removeOnComplete: true, removeOnFail: true } },
+);
+
 async function shutdown() {
-  await Promise.all([worker.close(), emailWorker.close(), billingWorker.close()]);
-  await Promise.all([brokerageQueue().close(), recurringQueue().close()]);
+  await Promise.all([worker.close(), emailWorker.close(), billingWorker.close(), payoutWorker.close()]);
+  await Promise.all([brokerageQueue().close(), recurringQueue().close(), payoutsQueue().close()]);
   process.exit(0);
 }
 process.on("SIGINT", shutdown);

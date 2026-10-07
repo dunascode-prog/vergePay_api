@@ -32,6 +32,7 @@ const files = [
   "migrations.db/recurring_plans.sql",
   "migrations.db/goals.sql",
   "migrations.db/payroll.sql",
+  "migrations.db/withdrawals.sql",
   "migrations.db/notifications.sql",
 ];
 

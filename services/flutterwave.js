@@ -143,3 +143,42 @@ export function createStaticVirtualAccount({ email, bvn, txRef, firstName, lastN
     currency: "NGN",
   });
 }
+
+// ---- Payouts to bank accounts (Transfers)
+
+// Nigerian banks: [{ id, code, name }].
+export function listBanks(country = "NG") {
+  return request("GET", `/banks/${country}`);
+}
+
+// Name enquiry: who holds this account. Returns { account_number, account_name }.
+export function resolveAccount({ accountNumber, bankCode }) {
+  return request("POST", "/accounts/resolve", { account_number: accountNumber, account_bank: bankCode });
+}
+
+// Flutterwave's fee for one bank transfer, in exact major units (it can have
+// fractions of a kobo, e.g. 26.875).
+export async function transferFee(amountMinor, currency = "NGN") {
+  const data = await request("GET", `/transfers/fee?amount=${toMajor(amountMinor)}&currency=${currency}&type=account`);
+  const row = Array.isArray(data) ? data[0] : data;
+  return Number(row?.fee ?? 0);
+}
+
+// Sends money from the platform's Flutterwave balance. `reference` is ours
+// and unique: Flutterwave refuses a second transfer with the same one.
+export function createTransfer({ bankCode, accountNumber, amountMinor, currency, narration, reference }) {
+  return request("POST", "/transfers", {
+    account_bank: bankCode,
+    account_number: accountNumber,
+    amount: toMajor(amountMinor),
+    currency,
+    debit_currency: currency,
+    narration,
+    reference,
+  });
+}
+
+// The transfer's current state: status NEW, PENDING, SUCCESSFUL or FAILED.
+export function getTransfer(transferId) {
+  return request("GET", `/transfers/${transferId}`);
+}

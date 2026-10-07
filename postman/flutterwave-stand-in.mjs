@@ -12,6 +12,13 @@
 //   POST /_test/complete          { tx_ref, status, card?, amount? }   checkout finished
 //   POST /_test/complete-latest   { status, amount? }  the newest saved-card charge resolves
 //   POST /_test/deposit           { tx_ref, amount }   a bank transfer lands
+//   POST /_test/transfer-mode     { transfer: "pending" | "successful" | "failed" | "reject" | "down" }
+//   POST /_test/transfer-complete { reference, status: "SUCCESSFUL" | "FAILED", complete_message? }
+//
+// Banks and name enquiry: account number 0000000000 doesn't exist at any
+// bank; any other number belongs to "STAND-IN HOLDER <last four digits>".
+// Transfer fees follow Flutterwave's NGN tiers: ₦10.75 up to ₦5,000,
+// ₦26.875 up to ₦50,000, ₦53.75 above.
 import http from "http";
 
 export const STAND_IN_SECRET_KEY = "FLWSECK_TEST-stand-in-X";
@@ -25,6 +32,18 @@ let latestTokenCharge = null;
 // unique across restarts, like real Flutterwave ids (the database keeps old ones)
 let nextId = Date.now();
 let chargeMode = "pending";
+let transferMode = "pending";
+const transfers = new Map(); // id -> transfer
+const transferByRef = new Map(); // reference -> id
+
+const BANKS = [
+  { id: 1, code: "044", name: "Access Bank" },
+  { id: 2, code: "058", name: "Guaranty Trust Bank" },
+  { id: 3, code: "011", name: "First Bank of Nigeria" },
+  { id: 4, code: "057", name: "Zenith Bank" },
+  { id: 5, code: "50211", name: "Kuda Bank" },
+];
+const transferFee = (amount) => (amount <= 5000 ? 10.75 : amount <= 50000 ? 26.875 : 53.75);
 
 const send = (res, code, body) => {
   res.writeHead(code, { "Content-Type": "application/json" });
@@ -108,6 +127,18 @@ http
       return send(res, 200, t);
     }
 
+    if (path === "/_test/transfer-mode") {
+      transferMode = body.transfer;
+      return send(res, 200, { transferMode });
+    }
+    if (path === "/_test/transfer-complete") {
+      const t = transfers.get(transferByRef.get(body.reference));
+      if (!t) return send(res, 404, { error: "unknown reference" });
+      t.status = body.status;
+      t.complete_message = body.complete_message ?? (body.status === "FAILED" ? "Account resolve failed" : "Transaction was successful");
+      return send(res, 200, t);
+    }
+
     // ---- the Flutterwave v3 API
     if (req.headers.authorization !== `Bearer ${STAND_IN_SECRET_KEY}`) {
       return send(res, 401, { status: "error", message: "Invalid authorization key" });
@@ -177,6 +208,67 @@ http
           amount: "0.00",
         },
       });
+    }
+    if (req.method === "GET" && path === "/banks/NG") {
+      return send(res, 200, { status: "success", message: "Banks fetched successfully", data: BANKS });
+    }
+    if (req.method === "POST" && path === "/accounts/resolve") {
+      const bank = BANKS.find((b) => b.code === body.account_bank);
+      if (!bank || !/^\d{10}$/.test(body.account_number ?? "") || body.account_number === "0000000000") {
+        return send(res, 400, { status: "error", message: "Sorry, recipient account could not be validated. Please try again", data: null });
+      }
+      return send(res, 200, {
+        status: "success",
+        message: "Account details fetched",
+        data: { account_number: body.account_number, account_name: `STAND-IN HOLDER ${body.account_number.slice(-4)}` },
+      });
+    }
+    if (req.method === "GET" && path === "/transfers/fee") {
+      const amount = Number(url.searchParams.get("amount"));
+      return send(res, 200, {
+        status: "success",
+        message: "Transfer fee fetched",
+        data: [{ currency: url.searchParams.get("currency") || "NGN", fee_type: "value", fee: transferFee(amount) }],
+      });
+    }
+    if (req.method === "POST" && path === "/transfers") {
+      if (transferMode === "down") return send(res, 503, { status: "error", message: "Service unavailable" });
+      if (transferMode === "reject") {
+        return send(res, 400, { status: "error", message: "Insufficient balance in your Flutterwave wallet", data: null });
+      }
+      if (transferByRef.has(body.reference)) {
+        return send(res, 400, { status: "error", message: "Transfer with this reference already exists", data: null });
+      }
+      const bank = BANKS.find((b) => b.code === body.account_bank);
+      const id = nextId++;
+      const t = {
+        id,
+        account_number: body.account_number,
+        bank_code: body.account_bank,
+        full_name: `STAND-IN HOLDER ${String(body.account_number).slice(-4)}`,
+        created_at: new Date().toISOString(),
+        currency: body.currency,
+        debit_currency: body.debit_currency,
+        amount: body.amount,
+        fee: transferFee(body.amount),
+        status: transferMode === "successful" ? "SUCCESSFUL" : transferMode === "failed" ? "FAILED" : "NEW",
+        reference: body.reference,
+        narration: body.narration,
+        complete_message: transferMode === "failed" ? "Account resolve failed" : "",
+        requires_approval: 0,
+        is_approved: 1,
+        bank_name: bank?.name ?? "Unknown bank",
+      };
+      transfers.set(id, t);
+      transferByRef.set(body.reference, id);
+      return send(res, 200, { status: "success", message: "Transfer Queued Successfully", data: t });
+    }
+    const transfer = /^\/transfers\/(\d+)$/.exec(path);
+    if (req.method === "GET" && transfer) {
+      const t = transfers.get(Number(transfer[1]));
+      return t
+        ? send(res, 200, { status: "success", message: "Transfer fetched", data: t })
+        : send(res, 404, { status: "error", message: "Transfer not found", data: null });
     }
     return send(res, 404, { status: "error", message: `no stand-in for ${req.method} ${path}` });
   })
