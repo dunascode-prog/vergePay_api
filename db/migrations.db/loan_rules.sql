@@ -95,6 +95,10 @@ ON CONFLICT (transaction_id, schedule_id) DO NOTHING;
 
 -- Automatic repayments: agreed when applying, or switched on later.
 ALTER TABLE loan_applications ADD COLUMN IF NOT EXISTS auto_debit_consent BOOLEAN NOT NULL DEFAULT FALSE;
+-- which loan terms the borrower agreed to, and when (services/loanTerms.js);
+-- empty for applications made before terms were recorded
+ALTER TABLE loan_applications ADD COLUMN IF NOT EXISTS terms_version VARCHAR(40);
+ALTER TABLE loan_applications ADD COLUMN IF NOT EXISTS terms_accepted_at TIMESTAMPTZ;
 ALTER TABLE loans ADD COLUMN IF NOT EXISTS auto_debit BOOLEAN NOT NULL DEFAULT FALSE;
 -- the borrower's day of the last collection attempt, and the last "couldn't collect" alert
 ALTER TABLE loans ADD COLUMN IF NOT EXISTS auto_debit_last_attempt_on DATE;
