@@ -2645,6 +2645,205 @@ const goals = [
   invariants(),
 ];
 
+// ---------------------------------------------------------------------------
+// 15. Payroll
+
+const payrollRun = (name, body, opts) => req(name, "POST", "/payroll/runs", { idem: "new", body, ...opts });
+
+const payroll = [
+  // three people to pay, each with a wallet
+  ...newUser("prA", "payee Ngozi"),
+  req("Ngozi: set a name", "PATCH", "/users/me", { body: { first_name: "Ngozi", last_name: "Adaeze" }, status: 200 }),
+  openAccount("Ngozi: personal wallet (NGN)", "prAWalletId", { saveNumber: "prANumber" }),
+  ...newUser("prB", "payee Kunle"),
+  openAccount("Kunle: personal wallet (NGN)", "prBWalletId", { saveNumber: "prBNumber" }),
+  ...newUser("prC", "payee Dami"),
+  openAccount("Dami: personal wallet (USD)", "prCWalletId", { currency: "USD", saveNumber: "prCNumber" }),
+
+  // the employer
+  ...newUser("employer", "the employer (Bisi)"),
+  req("Bisi: set a name", "PATCH", "/users/me", { body: { first_name: "Bisi", last_name: "Employer" }, status: 200 }),
+  openAccount("Bisi: business wallet (NGN)", "prBizId", { purpose: "business", saveNumber: "prBizNumber" }),
+  openAccount("Bisi: personal wallet (USD)", "prUsdId", { currency: "USD" }),
+
+  // payees
+  req("Add a payee before the identity check", "POST", "/payees", {
+    body: { account_number: "{{prANumber}}", pay_type: "retainer", frequency: "monthly", rate_minor: 3500000 },
+    status: 403,
+    checks: [["KYC required", 'errorCode === "KYC_REQUIRED"']],
+  }),
+  kycVerify(),
+  req("Payee - empty body", "POST", "/payees", { body: {}, status: 400 }),
+  req("Payee - account number not 10 digits", "POST", "/payees", {
+    body: { account_number: "123", pay_type: "retainer", frequency: "monthly", rate_minor: 100 },
+    status: 422,
+    checks: [["account_number flagged", "Boolean(j.error.details.account_number)"]],
+  }),
+  req("Payee - no wallet with that number", "POST", "/payees", {
+    body: { account_number: "0000000000", pay_type: "retainer", frequency: "monthly", rate_minor: 100 },
+    status: 422,
+    checks: [["account_number flagged", "Boolean(j.error.details.account_number)"]],
+  }),
+  req("Payee - your own wallet", "POST", "/payees", {
+    body: { account_number: "{{prBizNumber}}", pay_type: "retainer", frequency: "monthly", rate_minor: 100 },
+    status: 422,
+    checks: [["account_number flagged", "Boolean(j.error.details.account_number)"]],
+  }),
+  req("Payee - unknown pay type", "POST", "/payees", {
+    body: { account_number: "{{prANumber}}", pay_type: "salary", frequency: "monthly", rate_minor: 100 },
+    status: 422,
+    checks: [["pay_type flagged", "Boolean(j.error.details.pay_type)"]],
+  }),
+  req("Add Ngozi: ₦35,000 monthly retainer (named from her wallet)", "POST", "/payees", {
+    body: { account_number: "{{prANumber}}", role: "Virtual assistant", pay_type: "retainer", frequency: "monthly", rate_minor: 3500000 },
+    status: 201,
+    save: [["prAPayeeId", "j.payee_id"]],
+    checks: [
+      ["named after the wallet holder", 'j.name === "Ngozi Adaeze" && j.account_name === "Ngozi Adaeze" && j.account_number === v("prANumber")'],
+      ["active, in NGN, never paid, so due", 'j.payee_status === "active" && j.currency_code === "NGN" && j.payment_count === 0 && j.is_due === true && j.next_pay_date === null'],
+    ],
+  }),
+  req("Add Ngozi again", "POST", "/payees", {
+    body: { account_number: "{{prANumber}}", pay_type: "retainer", frequency: "monthly", rate_minor: 100 },
+    status: 409,
+    checks: [["account_number flagged", 'j.error.field === "account_number"']],
+  }),
+  req("Add Kunle: ₦25,000 per project, one-off", "POST", "/payees", {
+    body: { account_number: "{{prBNumber}}", name: "Kunle (design)", role: "Graphic designer", pay_type: "per_project", frequency: "one_off", rate_minor: 2500000 },
+    status: 201,
+    save: [["prBPayeeId", "j.payee_id"]],
+    checks: [["the name given", 'j.name === "Kunle (design)" && j.pay_type === "per_project"']],
+  }),
+  req("Add Dami: $500 hourly, every two weeks", "POST", "/payees", {
+    body: { account_number: "{{prCNumber}}", pay_type: "hourly", frequency: "biweekly", rate_minor: 50000 },
+    status: 201,
+    save: [["prCPayeeId", "j.payee_id"]],
+    checks: [["in the wallet's currency", 'j.currency_code === "USD"']],
+  }),
+  req("List payees", "GET", "/payees", {
+    status: 200,
+    checks: [["all three, alphabetical (Dami has no name set, so his username)", 'j.data.length === 3 && j.data[0].name === "Kunle (design)" && j.data[1].name === "Ngozi Adaeze" && j.data[2].name.startsWith("prC_")']],
+  }),
+
+  // pay runs: refusals, before any money moves
+  payrollRun("Run - wallet can't cover it", { source_account_id: "{{prBizId}}", items: [{ payee_id: "{{prAPayeeId}}" }] }, {
+    status: 422,
+    checks: [["insufficient funds, in words", 'errorCode === "INSUFFICIENT_FUNDS" && errorMessage.includes("₦35,000.00")']],
+  }),
+  req("Dev: fund Bisi's business wallet with ₦100,000", "POST", "/dev/accounts/{{prBizId}}/fund", { idem: "new", body: { amount_minor: 10000000 }, status: 201 }),
+  req("Run - no Idempotency-Key", "POST", "/payroll/runs", {
+    body: { source_account_id: "{{prBizId}}", items: [{ payee_id: "{{prAPayeeId}}" }] },
+    status: 400,
+  }),
+  payrollRun("Run - nobody to pay", { source_account_id: "{{prBizId}}", items: [] }, {
+    status: 422,
+    checks: [["items flagged", "Boolean(j.error.details.items)"]],
+  }),
+  payrollRun("Run - the same payee twice", { source_account_id: "{{prBizId}}", items: [{ payee_id: "{{prAPayeeId}}" }, { payee_id: "{{prAPayeeId}}" }] }, {
+    status: 422,
+    checks: [["items flagged", "Boolean(j.error.details.items)"]],
+  }),
+  payrollRun("Run - a USD payee from an NGN wallet", { source_account_id: "{{prBizId}}", items: [{ payee_id: "{{prAPayeeId}}" }, { payee_id: "{{prCPayeeId}}" }] }, {
+    status: 422,
+    checks: [["says which payee and why", 'j.error.details.items.some((m) => m.includes("USD"))']],
+  }),
+  payrollRun("Run - not one of your wallets", { source_account_id: "{{prAWalletId}}", items: [{ payee_id: "{{prAPayeeId}}" }] }, {
+    status: 422,
+    checks: [["source flagged", "Boolean(j.error.details.source_account_id)"]],
+  }),
+  balanceIs("Nothing moved yet (₦100,000)", "prBizId", "10000000"),
+
+  // a run that pays
+  req("Run: Ngozi at her rate, Kunle ₦30,000 for a bigger project", "POST", "/payroll/runs", {
+    idem: "new:prKey",
+    body: { source_account_id: "{{prBizId}}", items: [{ payee_id: "{{prAPayeeId}}" }, { payee_id: "{{prBPayeeId}}", amount_minor: 3000000 }], note: "October" },
+    status: 201,
+    save: [["prRunId", "j.run_id"], ["prNgoziTxnId", 'j.payments.find((p) => p.payee_id === v("prAPayeeId")).transaction_id']],
+    checks: [
+      ["two payments, ₦65,000 in total", 'j.payment_count === 2 && j.total_minor === 6500000 && j.payments.length === 2 && j.note === "October"'],
+      ["each at its amount", 'j.payments.find((p) => p.payee_id === v("prAPayeeId")).amount_minor === 3500000 && j.payments.find((p) => p.payee_id === v("prBPayeeId")).amount_minor === 3000000'],
+    ],
+  }),
+  req("Run - same key again (a retry)", "POST", "/payroll/runs", {
+    idem: "same:prKey",
+    body: { source_account_id: "{{prBizId}}", items: [{ payee_id: "{{prAPayeeId}}" }, { payee_id: "{{prBPayeeId}}", amount_minor: 3000000 }], note: "October" },
+    status: 201,
+    checks: [["the same run, nobody paid twice", 'replayed && j.run_id === v("prRunId")']],
+  }),
+  req("Run - same key, different payees", "POST", "/payroll/runs", {
+    idem: "same:prKey",
+    body: { source_account_id: "{{prBizId}}", items: [{ payee_id: "{{prAPayeeId}}" }] },
+    status: 422,
+    checks: [["key conflict", 'errorCode === "IDEMPOTENCY_KEY_CONFLICT"']],
+  }),
+  forgetKey("prKey"),
+  req("Run - retry after a lost reply", "POST", "/payroll/runs", {
+    idem: "same:prKey",
+    body: { source_account_id: "{{prBizId}}", items: [{ payee_id: "{{prAPayeeId}}" }, { payee_id: "{{prBPayeeId}}", amount_minor: 3000000 }], note: "October" },
+    status: 201,
+    checks: [["answered from the stored run, nobody paid twice", 'replayed && j.run_id === v("prRunId")']],
+  }),
+  balanceIs("Wallet paid out ₦65,000 once (₦35,000 left)", "prBizId", "3500000"),
+  req("Ngozi after the run", "GET", "/payees/{{prAPayeeId}}", {
+    status: 200,
+    checks: [
+      ["paid once, not due until next month", "j.payment_count === 1 && j.last_paid_minor === 3500000 && j.total_paid_minor === 3500000 && j.is_due === false && /^\\d{4}-\\d{2}-\\d{2}$/.test(j.next_pay_date)"],
+      ["the payment, from the business wallet", 'j.payments.length === 1 && j.payments[0].run_id === v("prRunId") && j.payments[0].source_purpose === "business" && j.payments[0].note === "October"'],
+    ],
+  }),
+  req("Kunle after the run (one-off: done)", "GET", "/payees/{{prBPayeeId}}", {
+    status: 200,
+    checks: [["paid, not due again", "j.payment_count === 1 && j.is_due === false && j.next_pay_date === null"]],
+  }),
+  req("The run", "GET", "/payroll/runs/{{prRunId}}", {
+    status: 200,
+    checks: [["from the business wallet", 'j.source_purpose === "business" && j.payments.length === 2']],
+  }),
+
+  // inactive payees
+  req("Edit Kunle: inactive", "PATCH", "/payees/{{prBPayeeId}}", {
+    body: { payee_status: "inactive" },
+    status: 200,
+    checks: [["inactive, not due", 'j.payee_status === "inactive" && j.is_due === false']],
+  }),
+  payrollRun("Run - an inactive payee", { source_account_id: "{{prBizId}}", items: [{ payee_id: "{{prBPayeeId}}" }] }, {
+    status: 422,
+    checks: [["says Kunle is inactive", 'j.error.details.items[0].includes("inactive")']],
+  }),
+  req("Edit - nothing to change", "PATCH", "/payees/{{prAPayeeId}}", { body: { account_id: "x" }, status: 422 }),
+  req("Edit Ngozi's rate", "PATCH", "/payees/{{prAPayeeId}}", {
+    body: { rate_minor: 1500000, role: null },
+    status: 200,
+    checks: [["new rate, role cleared", "j.rate_minor === 1500000 && j.role === null"]],
+  }),
+  req("List: active payees", "GET", "/payees?status=active", { status: 200, checks: [["Ngozi and Dami", "j.data.length === 2"]] }),
+
+  concurrently("Concurrent: 3 runs paying Ngozi ₦15,000 from a wallet holding ₦35,000", {
+    count: 3,
+    method: "POST",
+    path: "/payroll/runs",
+    bodyExpr: '{ source_account_id: pm.collectionVariables.get("prBizId"), items: [{ payee_id: pm.collectionVariables.get("prAPayeeId") }] }',
+    expectExpr: `${count(null, 201)} === 2 && ${count(null, 422)} === 1`,
+    label: "two runs pay, the third is refused for insufficient funds",
+    description: "Each run locks the wallet before checking it can cover the total, so the runs queue and the third sees what's left.",
+  }),
+  balanceIs("Wallet holds ₦5,000", "prBizId", "500000"),
+  req("Runs, newest first", "GET", "/payroll/runs", {
+    status: 200,
+    checks: [["three runs, ₦95,000 in all", "j.data.length === 3 && j.data.reduce((s, r) => s + r.total_minor, 0) === 9500000"]],
+  }),
+
+  // the payee's side
+  signInAs("prA", "payee Ngozi"),
+  newestAlert("Ngozi's alert names who paid her", [["\"Bisi Employer paid you ₦15,000.00\", marked payroll", 'j.data[0].title === "Bisi Employer paid you ₦15,000.00" && j.data[0].body.includes("Payroll")']]),
+  balanceIs("Ngozi received ₦35,000 + 2 × ₦15,000", "prAWalletId", "6500000"),
+  req("Ngozi can't see Bisi's payees", "GET", "/payees/{{prAPayeeId}}", { status: 404 }),
+  req("Ngozi can't see Bisi's runs", "GET", "/payroll/runs/{{prRunId}}", { status: 404 }),
+  kycVerify("So the reversal below gets past the identity check."),
+  req("Ngozi can't reverse a payroll payment", "POST", "/transactions/{{prNgoziTxnId}}/reverse", { idem: "new", status: 409 }),
+  invariants(),
+];
+
 const wrapUp = [
   signIn("ada"),
   req("2FA: start setup (for the brute-force check)", "POST", "/auth/2fa/enable", { status: 200 }),
@@ -2773,7 +2972,8 @@ const main = collection(
     folder("12. Invoicing clients and pay links", "The client book, draft invoices with line items (rounding to the kobo), sending with a number, pay link and email (sent by the worker), reminders and their throttle, the public pay page (what it hides), Flutterwave checkout through the stand-in (paid, declined, tampered, two payers at once, the webhook), cancelling, a VergePay customer paying the link from their wallet, refunds, archiving, and other users' clients. Two fresh customers; needs the worker running.", clientInvoicing),
     folder("13. Recurring billing", "Plans that invoice a client on a schedule: validation, a plan that starts today billing at once (number, pay link, email), the scheduled run (no double billing), catching up missed cycles, pausing (not billed while paused, resuming without back-billing), editing, a plan that can't bill saying why once, cancelling, listing, and other users. A fresh customer; the billing job is run through /dev/recurring/run.", recurring),
     folder("14. Savings goals", "Goals that hold real money in their own savings account: validation, contributions from a wallet (KYC, currency, insufficient funds, idempotent retries including a lost reply, a concurrent race), withdrawals, the goal's activity and alerts, the goal's account refusing transfers and direct closing, editing, closing (money back to a wallet, or empty), and other users. A fresh saver.", goals),
-    folder("15. Wrap-up", "The 2FA brute-force limit, resetting the test users, and logout.", wrapUp),
+    folder("15. Payroll", "Paying other VergePay customers: adding payees by account number (KYC, validation, own wallet, duplicates), pay runs that are all or nothing (refusals before any money moves, insufficient funds, mixed currencies, inactive payees), idempotent retries including a lost reply, due dates by frequency, a concurrent race, and the payee's side (alert, balance, privacy, no reversal). Four fresh customers.", payroll),
+    folder("16. Wrap-up", "The 2FA brute-force limit, resetting the test users, and logout.", wrapUp),
   ],
 );
 

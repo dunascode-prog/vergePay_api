@@ -334,7 +334,28 @@ export async function checkInvariants(req, res) {
        WHERE t.transaction_type NOT IN ('goal_contribution', 'goal_withdrawal')
           OR w.user_id IS DISTINCT FROM g.user_id OR w.account_type <> 'current'
           OR (t.transaction_type = 'goal_contribution') <> (t.receiver_account_id = g.account_id)
-      )::int AS goal_transaction_mismatch
+      )::int AS goal_transaction_mismatch,
+      -- every payroll payment is a settled payroll_payment from its run's
+      -- wallet to its payee's wallet, for the amount recorded
+      (SELECT count(*) FROM payroll_payments pp
+       JOIN payroll_runs r ON r.run_id = pp.run_id
+       JOIN payees p ON p.payee_id = pp.payee_id
+       JOIN transactions t ON t.transaction_id = pp.transaction_id
+       WHERE t.transaction_type <> 'payroll_payment' OR t.status <> 'settled'
+          OR t.amount_minor <> pp.amount_minor OR t.currency_code <> r.currency_code
+          OR t.sender_account_id <> r.source_account_id OR t.receiver_account_id <> p.account_id
+          OR p.user_id <> r.user_id
+      )::int AS payroll_payment_mismatch,
+      -- a run's total and count are exactly its payments
+      (SELECT count(*) FROM payroll_runs r
+       WHERE r.total_minor <> COALESCE((SELECT sum(amount_minor) FROM payroll_payments pp WHERE pp.run_id = r.run_id), 0)
+          OR r.payment_count <> (SELECT count(*) FROM payroll_payments pp WHERE pp.run_id = r.run_id)
+      )::int AS payroll_run_total_drift,
+      -- payroll money never moves without its payment record
+      (SELECT count(*) FROM transactions t
+       WHERE t.transaction_type = 'payroll_payment'
+         AND NOT EXISTS (SELECT 1 FROM payroll_payments pp WHERE pp.transaction_id = t.transaction_id)
+      )::int AS payroll_transaction_unrecorded
   `);
   const checks = result.rows[0];
   return res.status(200).json({
