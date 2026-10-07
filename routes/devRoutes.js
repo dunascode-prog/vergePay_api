@@ -15,6 +15,7 @@ import {
   runLoanJobsNow,
   latestEmail,
   expirePasswordResetCode,
+  expireEmailChangeCode,
 } from "../controllers/devController.js";
 import { idempotency } from "../utils/idempotency.js";
 import { verifyAccessToken, verifyAccessTokenAllowPending } from "../utils/jwt.js";
@@ -41,5 +42,6 @@ devRouter.post("/loans/run-jobs", verifyAccessToken, runLoanJobsNow);
 // test addresses only, and no session: password resets happen signed out
 devRouter.get("/emails/latest", latestEmail);
 devRouter.post("/password-reset/expire", expirePasswordResetCode);
+devRouter.post("/email-change/expire", verifyAccessToken, expireEmailChangeCode);
 
 export default devRouter;

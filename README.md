@@ -214,7 +214,10 @@ The full designs are in [`documentation/`](documentation/): the API design (`Fin
 | POST | `/v1/auth/2fa/enable` | New TOTP secret and `otpauth://` URI for a QR code |
 | POST | `/v1/auth/2fa/verify` | Finishes setup, answers the sign-in challenge, or re-confirms |
 | DELETE | `/v1/auth/2fa` | Turn 2FA off (needs a recent code) |
-| GET / PATCH | `/v1/users/me` | Profile. Name and date of birth lock once KYC starts |
+| GET / PATCH | `/v1/users/me` | Profile. Name and date of birth lock once KYC starts. `pending_email` shows an email change waiting for its code |
+| POST | `/v1/users/me/email` | Change the email: the current password (and a recent 2FA code if 2FA is on), then a 6-digit code goes to the new address |
+| POST | `/v1/users/me/email/confirm` | The code (5 tries). The email changes, the old address gets a notice, and the session stays |
+| DELETE | `/v1/users/me/email` | Cancel an email change in progress |
 | POST | `/v1/kyc/submissions` | Verify identity by BVN, legal name and date of birth. `202`, decided asynchronously (the client polls). The BVN is stored encrypted in the vault, never returned. On approval the legal name moves onto the profile and locks. A sandbox provider decides in development; a real one (Dojah, Smile ID, Prembly) plugs into the same decision function |
 | GET | `/v1/kyc/submissions` · `/:id` | Submission history, newest first, with a rejection reason so a customer can fix it |
 | GET | `/v1/accounts/lookup?account_number=` | **Name enquiry** before sending: the wallet holder's name. Verified customers only, 30 per 15 minutes, never system or loan accounts |
@@ -370,6 +373,7 @@ An alert is written for every settled movement on a customer's wallet: a credit 
 
 ## Security at a glance
 
+- **Changing the email:** the current password (and a recent 2FA code if 2FA is on), then a code sent to the new address, so nobody can move an account to an address they don't own. The old address is told, with the new one masked.
 - **Password reset:** a 6-digit code by email, stored only as a hash bound to the user, valid 15 minutes with 5 tries. Asking for one never reveals whether the email has an account, and a reset ends every session.
 - **Sessions:** short-lived access JWTs and one-time refresh tokens in HttpOnly, SameSite=Lax cookies (Lax so the session survives the return from a payment page; cross-site writes still carry no cookie). Only a SHA-256 hash of each refresh token is stored.
 - **Money actions:** most are KYC-gated (a borrower can always repay), all are rate-limited per user, and they're 2FA-gated where the API design calls for it.
@@ -382,7 +386,7 @@ An alert is written for every settled movement on a customer's wallet: a credit 
 
 ## Testing
 
-The whole API is exercised by a Postman suite, [`postman/vergepay-api.postman_collection.json`](postman/vergepay-api.postman_collection.json): **965 requests and 1,623 assertions**, grouped into 20 folders from sign-up to brokerage disconnection. It isn't just happy paths:
+The whole API is exercised by a Postman suite, [`postman/vergepay-api.postman_collection.json`](postman/vergepay-api.postman_collection.json): **1,001 requests and 1,687 assertions**, grouped into 21 folders from sign-up to brokerage disconnection. It isn't just happy paths:
 
 - **Every edge case:** validation, wrong owner, wrong state (`409`), insufficient funds, replayed keys, and retries after a simulated crash.
 - **Races:** simultaneous payments, refunds, repayments and sign-ins, fired at the same instant from test scripts.
@@ -395,6 +399,7 @@ The whole API is exercised by a Postman suite, [`postman/vergepay-api.postman_co
 - **Withdrawals:** name enquiry, saved accounts, the fee split to the kobo, refusals before any money moves, a retried and a lost-reply withdrawal sent once, a webhook claiming success that the API doesn't believe, a bank failure refunded with its reason, Flutterwave refusing (refunded at once) and unreachable (held, then sent), the daily limit, and three withdrawals at once against it.
 - **Loan rules:** auto-debit collected and not (one alert a day), a late fee charged once after the grace period, partial payments in order, the payoff quote and the most you can pay, default at 90 days and back to active once caught up, and paying ahead on a loan with interest.
 - **Forgot password:** the same answer for an unknown email (and no email sent), one email a minute, wrong codes counting down to a used-up code, the password rules, an expired code, a code that works once, the old session refused, and only the new password signing in.
+- **Changing email:** a wrong password, your own address and one already in use refused with no email sent, the change pending until confirmed, wrong codes, the old address told, the old address no longer signing in, expiry, cancelling, and a recent 2FA code required when 2FA is on.
 - **Ledger invariants** checked across the database after each money-moving folder, including that every goal's money sits in its own account and only ever moves to and from its owner's wallets, and that every payroll payment matches its run, its payee and its ledger transaction.
 - **Invoicing clients:** the client profile (validation, search by industry, clearing a field, archive and restore) and a client's payment record and health, drafts and their rounding, sending and email (built but not sent: `EMAIL_TRANSPORT=json`), the reminder throttle and reminder counts, an invoice made overdue (dev backdate), what the public pay page hides, checkout paid, declined, tampered and paid twice at once, the webhook, cancelling, and paying a link from a wallet.
 - **Live updates:** Newman can't open sockets, so [`postman/realtime-check.mjs`](postman/realtime-check.mjs) (`npm run test:realtime`) connects real WebSockets for two customers and checks 17 things: who may connect, alerts and balance events arriving live on both sides and in a second tab, a rolled-back transfer sending nothing, one customer never seeing another's events, and refusal after sign-out.
@@ -406,7 +411,7 @@ npm run flw:stand-in           # terminal 1: Flutterwave stand-in on :9999
 npm run alpaca:stand-in        # terminal 2: Alpaca stand-in on :9998
 npm run start:with-stand-in    # terminal 3: the API, pointed at the stand-ins
 npm run worker:with-stand-in   # terminal 4: the background worker (needs REDIS_URL)
-npm run test:postman           # terminal 5: runs all 965 requests with Newman
+npm run test:postman           # terminal 5: runs all 1,001 requests with Newman
 npm run test:realtime          # then: the live WebSocket checks (API_URL=... for another port)
 ```
 
