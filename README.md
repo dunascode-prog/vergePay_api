@@ -17,7 +17,7 @@ Built by **[Seyitan Omodara](https://github.com/dunascode-prog)** · Frontend: [
 | | |
 |---|---|
 | **What it is** | A REST API for money: open accounts, move money, lend, invoice clients (who pay through a link), bill them on a schedule, and fund accounts by card or bank transfer |
-| **Endpoints** | 80, across auth, accounts, transactions, loans, invoices, clients, recurring billing, public pay links, cards, investments, notifications, webhooks and back office, plus a live WebSocket |
+| **Endpoints** | 87, across auth, accounts, transactions, loans, invoices, clients, recurring billing, savings goals, public pay links, cards, investments, notifications, webhooks and back office, plus a live WebSocket |
 | **Live updates** | Debit/credit alerts written in the same DB transaction as the money, pushed over a WebSocket after commit, fanned out across processes with Redis pub/sub |
 | **Money model** | Double-entry ledger in integer minor units (kobo). Balances are cached, but the ledger is the truth |
 | **Payments** | Flutterwave v3 hosted checkout, card tokenization, 3-D Secure and permanent virtual accounts, verified on the real sandbox |
@@ -103,6 +103,13 @@ A plan invoices one client the same amount every week, month, quarter or year ([
 - **Once per cycle:** a scheduled worker job bills every due plan, each in its own DB transaction with its row locked (`FOR UPDATE SKIP LOCKED`, so two workers share the work). A unique (plan, cycle) index on invoices means a retried or doubled run can't send a client the same invoice twice.
 - **Catching up, not piling on:** if the worker was down, each missed cycle is billed once it's back, due a few days from today rather than already overdue. Resuming a paused plan picks up at the next date, without billing the paused weeks.
 - **Says why, once:** if a plan can't bill (its wallet is frozen, its client archived), nothing is sent, the reason is saved on the plan and the owner is alerted once, not every run.
+
+### Savings goals that hold real money
+A goal isn't a number someone types in: each one has its own savings account, so saving towards it is a real ledger transaction from a wallet ([`controllers/goalController.js`](controllers/goalController.js)).
+- **One source of truth:** what a goal has saved is its account's balance, and its totals (contributed, withdrawn, how many times) are read from its settled transactions, so progress can't drift from the money.
+- **Only through the goal:** a goal's account refuses ordinary transfers in or out, and can't be frozen or closed on its own. Its money moves only through the goal, so the goal's history always explains its balance.
+- **Same guarantees as a transfer:** contributions and withdrawals are idempotent (including a retry after a lost reply) and row-locked, so four contributions fired at once from a wallet that can afford three move exactly three.
+- **Closing gives the money back:** closing a goal moves whatever is left to a wallet in the same DB transaction that closes the goal and its account.
 
 ### Loan maths that adds up to the kobo
 Amortization ([`services/amortization.js`](services/amortization.js)) rounds the exact schedule's *cumulative* principal rather than the monthly payment. The naive approach (round the payment, carry the error) visibly drifts on long, small loans, and can pay a loan off early or produce negative principal. The final algorithm was property-tested across **21,681 amount/rate/term combinations**: principal always sums exactly, nothing is ever negative, and every installment is within 2 kobo of the level payment.
@@ -254,6 +261,19 @@ The full designs are in [`documentation/`](documentation/): the API design (`Fin
 </details>
 
 <details>
+<summary><b>Savings goals</b>: pots that hold real money towards a target and a date</summary>
+
+| Method | Endpoint | |
+|---|---|---|
+| POST | `/v1/goals` | A goal with a name, category, target and target date, in NGN or USD. Opens its own savings account. Up to 20 active goals |
+| GET | `/v1/goals` | The customer's goals (`?status=active|closed|all`), each with what it has saved, its progress and its totals |
+| GET / PATCH | `/v1/goals/:id` | One goal with its contributions and withdrawals (running balance, the wallet on the other side); edit the name, category, target or date |
+| POST | `/v1/goals/:id/contributions` | Move money from a wallet into the goal (KYC-verified, same currency, idempotent) |
+| POST | `/v1/goals/:id/withdrawals` | Move money from the goal back to a wallet (idempotent; never more than the goal holds) |
+| POST | `/v1/goals/:id/close` | Moves whatever is left back to a wallet and closes the goal and its account. Final |
+</details>
+
+<details>
 <summary><b>Cards and funding</b>: tokenized cards, spending controls, bank transfers, signed webhooks</summary>
 
 | Method | Endpoint | |
@@ -308,7 +328,7 @@ An alert is written for every settled movement on a customer's wallet: a credit 
 
 ## Testing
 
-The whole API is exercised by a Postman suite, [`postman/vergepay-api.postman_collection.json`](postman/vergepay-api.postman_collection.json): **686 requests and 1,144 assertions**, grouped into 15 folders from sign-up to brokerage disconnection. It isn't just happy paths:
+The whole API is exercised by a Postman suite, [`postman/vergepay-api.postman_collection.json`](postman/vergepay-api.postman_collection.json): **745 requests and 1,248 assertions**, grouped into 16 folders from sign-up to brokerage disconnection. It isn't just happy paths:
 
 - **Every edge case:** validation, wrong owner, wrong state (`409`), insufficient funds, replayed keys, and retries after a simulated crash.
 - **Races:** simultaneous payments, refunds, repayments and sign-ins, fired at the same instant from test scripts.
@@ -316,7 +336,8 @@ The whole API is exercised by a Postman suite, [`postman/vergepay-api.postman_co
 - **Provider behaviour on demand:** local stand-ins for Flutterwave and Alpaca ([`postman/flutterwave-stand-in.mjs`](postman/flutterwave-stand-in.mjs), [`postman/alpaca-stand-in.mjs`](postman/alpaca-stand-in.mjs)) produce declines, 3-D Secure, tampered amounts, bank deposits, rate limits, outages and revoked tokens.
 - **The background worker:** each brokerage sync is watched until it finishes, including retries with backoff, giving up after 5 attempts, and the scheduler.
 - **Recurring billing:** a plan that starts today billing at once, a run that finds nothing more to bill (no double billing), missed months caught up one invoice each, pausing and resuming without back-billing, edits, a plan that can't bill saying why exactly once, cancelling, and other customers' plans.
-- **Ledger invariants** checked across the database after each money-moving folder.
+- **Savings goals:** contributions refused before KYC, across currencies or beyond the balance, a retried contribution (and one retried after a lost reply) moving money once, four contributions at once from a wallet that can afford three, the goal's account refusing transfers and direct closing, going past the target, and closing with the money returned.
+- **Ledger invariants** checked across the database after each money-moving folder, including that every goal's money sits in its own account and only ever moves to and from its owner's wallets.
 - **Invoicing clients:** the client profile (validation, search by industry, clearing a field, archive and restore) and a client's payment record and health, drafts and their rounding, sending and email (built but not sent: `EMAIL_TRANSPORT=json`), the reminder throttle and reminder counts, an invoice made overdue (dev backdate), what the public pay page hides, checkout paid, declined, tampered and paid twice at once, the webhook, cancelling, and paying a link from a wallet.
 - **Live updates:** Newman can't open sockets, so [`postman/realtime-check.mjs`](postman/realtime-check.mjs) (`npm run test:realtime`) connects real WebSockets for two customers and checks 17 things: who may connect, alerts and balance events arriving live on both sides and in a second tab, a rolled-back transfer sending nothing, one customer never seeing another's events, and refusal after sign-out.
 
@@ -389,7 +410,7 @@ vergePay_api/
 │                    alpaca.js, brokerageSync.js, queue.js (BullMQ), vault.js,
 │                    notifications.js (alerts), realtime.js (Redis pub/sub event bus),
 │                    invoices.js, invoiceEmails.js, email.js (SMTP via the worker),
-│                    recurring.js (recurring billing)
+│                    recurring.js (recurring billing), goals.js (savings goals)
 ├── realtime/        the WebSocket server for live updates (/v1/ws)
 ├── worker.js        the background worker (npm run worker)
 ├── routes/          Express routers, one per resource
@@ -416,7 +437,7 @@ vergePay_api/
 
 ## Roadmap
 
-Built so far: auth and 2FA, accounts, the ledger and transfers, loans, invoices (to clients outside VergePay, with pay links and email) and refunds, recurring billing, cards and bank-transfer funding, investments with a background brokerage sync, and in-app alerts with live WebSocket updates. Next:
+Built so far: auth and 2FA, accounts, the ledger and transfers, loans, invoices (to clients outside VergePay, with pay links and email) and refunds, recurring billing, savings goals, cards and bank-transfer funding, investments with a background brokerage sync, and in-app alerts with live WebSocket updates. Next:
 
 - [ ] Staff accounts with roles for the back office, replacing the internal key; KYC review and audit-log search
 - [ ] Automated reconciliation against Flutterwave settlement reports, and chargeback handling

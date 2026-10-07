@@ -127,13 +127,22 @@ export async function recordMoneyNotifications(client, txn) {
   const created = [];
 
   if (sender && receiver && sender.user_id === receiver.user_id) {
+    // goal moves name the goal (their description) instead of "Savings wallet"
+    const own =
+      txn.transaction_type === "goal_contribution"
+        ? { title: `You saved ${amount} towards ${txn.description}`, body: `From your ${walletName(sender)}` }
+        : txn.transaction_type === "goal_withdrawal"
+          ? { title: `You withdrew ${amount} from ${txn.description}`, body: `Into your ${walletName(receiver)}` }
+          : {
+              title: `You moved ${amount} to your ${walletName(receiver)}`,
+              body: withNote(`From your ${walletName(sender)}`, txn.description),
+            };
     created.push(
       await insertNotification(client, {
         ...money,
+        ...own,
         userId: receiver.user_id,
         kind: "own_transfer",
-        title: `You moved ${amount} to your ${walletName(receiver)}`,
-        body: withNote(`From your ${walletName(sender)}`, txn.description),
         accountId: receiver.account_id,
       }),
     );
