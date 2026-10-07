@@ -51,6 +51,9 @@ function creditText(txn, amount, mine, other) {
       return { title: `Invoice paid: ${amount}${from ? ` by ${from}` : ""}`, body: withNote(into, txn.description) };
     case "refund":
       return { title: `Refund of ${amount}${from ? ` from ${from}` : ""}`, body: into };
+    case "payroll_payment":
+      // description: "Payroll" or "Payroll · October"
+      return { title: from ? `${from} paid you ${amount}` : `${amount} payroll payment`, body: withNote(into, txn.description) };
     default:
       return { title: `${amount} credited to your ${walletName(mine)}`, body: txn.description };
   }
@@ -68,6 +71,8 @@ function debitText(txn, amount, mine, other) {
       return { title: `You paid ${amount}${to ? ` to ${to}` : ""}`, body: withNote(outOf, txn.description ?? "Invoice payment") };
     case "refund":
       return { title: `You refunded ${amount}${to ? ` to ${to}` : ""}`, body: outOf };
+    case "payroll_payment":
+      return { title: `You paid ${amount}${to ? ` to ${to}` : ""}`, body: withNote(outOf, txn.description) };
     case "fee":
       return { title: `Fee of ${amount}`, body: withNote(outOf, txn.description) };
     default:
