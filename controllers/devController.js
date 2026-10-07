@@ -444,6 +444,41 @@ export async function decideOwnLoanApplication(req, res) {
   return res.status(201).json({ ...loan, loan_status: "active" });
 }
 
+// Test addresses only, so these helpers can never read a real customer's mail.
+const testAddress = z.string().trim().toLowerCase().regex(/@vergepay\.dev$/,"Test addresses (@vergepay.dev) only.");
+
+// GET /v1/dev/emails/latest?to=&kind=
+// The newest email to a test address (no session needed: the person may be
+// signed out, e.g. resetting a password), so the suite can read a code from
+// it the way a customer would.
+export async function latestEmail(req, res) {
+  const validation = z.strictObject({ to: testAddress, kind: z.string().max(20).optional() }).safeParse(req.query);
+  if (!validation.success) throw new ValidationError({ details: validationDetails(validation.error) });
+  const { to, kind } = validation.data;
+  const result = await pool.query(
+    `SELECT email_id, kind, to_address, subject, text_body, status, created_at FROM email_log
+     WHERE lower(to_address) = $1 AND ($2::text IS NULL OR kind = $2)
+     ORDER BY created_at DESC LIMIT 1`,
+    [to, kind ?? null],
+  );
+  if (result.rowCount === 0) throw new NotFoundError({ message: "No email to that address." });
+  return res.status(200).json(result.rows[0]);
+}
+
+// POST /v1/dev/password-reset/expire  { email }
+// Ages a test address's reset codes by 20 minutes: the live one expires, and
+// the 60-second gap before another can be sent is over (so tests don't wait).
+export async function expirePasswordResetCode(req, res) {
+  const validation = z.strictObject({ email: testAddress }).safeParse(req.body ?? {});
+  if (!validation.success) throw new ValidationError({ details: validationDetails(validation.error) });
+  const result = await pool.query(
+    `UPDATE password_reset_codes r SET expires_at = r.expires_at - interval '20 minutes', created_at = r.created_at - interval '20 minutes'
+     FROM users u WHERE u.user_id = r.user_id AND lower(u.email) = $1`,
+    [validation.data.email],
+  );
+  return res.status(200).json({ expired: result.rowCount });
+}
+
 // POST /v1/dev/loans/run-jobs
 // Runs the worker's loan job now (auto-debits, late fees, defaults), for the
 // caller's own loans only, so tests never touch anyone else's.

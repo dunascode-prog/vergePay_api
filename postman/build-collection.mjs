@@ -3060,6 +3060,110 @@ const withdrawals = [
 ];
 
 // ---------------------------------------------------------------------------
+// 18. Forgot password (a fresh user)
+
+const NEW_PASSWORD = "VergePay#Reset2026";
+const fpEmail = "{{fpUsername}}@vergepay.dev";
+const fpForgot = (name, opts = {}) =>
+  req(name, "POST", "/auth/password/forgot", {
+    body: { email: fpEmail },
+    status: 202,
+    checks: [["the same answer whether or not the account exists", 'j.message === "If an account uses that email, we\'ve sent it a code. It expires in 15 minutes."']],
+    ...opts,
+  });
+// reads the newest reset email the way the customer would, and keeps its code
+const fpReadCode = (name, variable = "fpCode", extraChecks = []) =>
+  req(name, "GET", `/dev/emails/latest?to=${fpEmail}&kind=password_reset`, {
+    status: 200,
+    save: [[variable, '(j.subject.match(/^(\\d{6}) /) || [])[1]']],
+    checks: [
+      ["the subject starts with a 6-digit code, also in the body", "/^\\d{6} is your VergePay password reset code$/.test(j.subject) && j.text_body.includes(j.subject.slice(0, 6))"],
+      ...extraChecks,
+    ],
+  });
+const fpReset = (name, code, status, checks, opts = {}) =>
+  req(name, "POST", "/auth/password/reset", {
+    body: { email: fpEmail, code, password: NEW_PASSWORD, confirmPassword: NEW_PASSWORD, ...(opts.body ?? {}) },
+    status,
+    checks,
+    description: opts.description ?? "",
+  });
+const fpExpire = (name) => req(name, "POST", "/dev/password-reset/expire", { body: { email: fpEmail }, status: 200, description: "Development only. Ages the code by 20 minutes: it expires, and the 60-second wait before another can be sent is over." });
+// any 6 digits except the real code
+const wrongCode = 'pm.collectionVariables.set("fpWrong", String((Number(pm.collectionVariables.get("fpCode")) + 1) % 1000000).padStart(6, "0"));';
+
+const forgotPassword = [
+  ...newUser("fp", "the forgetful customer (Femi)"),
+  req("Keep this session's refresh token (to check it ends)", "GET", "/users/me", {
+    status: 200,
+    save: [["fpOldRefresh", 'pm.cookies.get("refresh_token")']],
+  }),
+  req("Unknown email: the same answer", "POST", "/auth/password/forgot", {
+    body: { email: "nobody_{{fpUsername}}@vergepay.dev" },
+    status: 202,
+    checks: [["202 with the usual message", 'j.message.startsWith("If an account uses that email")']],
+  }),
+  req("No email sent to the unknown address", "GET", "/dev/emails/latest?to=nobody_{{fpUsername}}@vergepay.dev", { status: 404 }),
+  req("Not an email address", "POST", "/auth/password/forgot", { body: { email: "femi" }, status: 422 }),
+
+  fpForgot("Forgot password: send a code"),
+  fpReadCode("Read the code from the email", "fpCode", [["queued to the worker", 'j.status === "queued" || j.status === "sent"']]),
+  fpForgot("Ask again straight away (no second email within 60 seconds)"),
+  fpReadCode("Still the first code", "fpCodeAgain", [["same code", 'j.subject.slice(0, 6) === v("fpCode")']]),
+
+  // wrong codes, and the rules
+  req("Wrong code: 4 tries left", "POST", "/auth/password/reset", {
+    pre: [wrongCode],
+    body: { email: fpEmail, code: "{{fpWrong}}", password: NEW_PASSWORD, confirmPassword: NEW_PASSWORD },
+    status: 422,
+    checks: [["\"That code isn't right. You have 4 tries left.\"", 'errorMessage === "That code isn\'t right. You have 4 tries left."']],
+  }),
+  fpReset("Weak new password (refused before the code is checked)", "{{fpCode}}", 422, [["password rules", "!!j.error.details.password"]], { body: { password: "short", confirmPassword: "short" } }),
+  fpReset("Passwords don't match", "{{fpCode}}", 422, [["confirmPassword", "!!j.error.details.confirmPassword"]], { body: { confirmPassword: "VergePay#Other2026" } }),
+  fpReset("Not 6 digits", "12ab", 422, [["code", "!!j.error.details.code"]]),
+  fpReset("Right code, wrong email", "{{fpCode}}", 422, [["looks expired or invalid", 'errorMessage === "That code has expired or isn\'t valid. Ask for a new one."']], { body: { email: "nobody_{{fpUsername}}@vergepay.dev" } }),
+  ...[3, 2, 1].map((left) =>
+    req(`Wrong code: ${left} ${left === 1 ? "try" : "tries"} left`, "POST", "/auth/password/reset", {
+      pre: [wrongCode],
+      body: { email: fpEmail, code: "{{fpWrong}}", password: NEW_PASSWORD, confirmPassword: NEW_PASSWORD },
+      status: 422,
+      checks: [[`${left} left`, `errorMessage === "That code isn't right. You have ${left} ${left === 1 ? "try" : "tries"} left."`]],
+    }),
+  ),
+  req("Fifth wrong code: the code is used up", "POST", "/auth/password/reset", {
+    pre: [wrongCode],
+    body: { email: fpEmail, code: "{{fpWrong}}", password: NEW_PASSWORD, confirmPassword: NEW_PASSWORD },
+    status: 422,
+    checks: [["can't be used again", 'errorMessage === "That code isn\'t right, and it can\'t be used again. Ask for a new one."']],
+  }),
+  fpReset("Even the right code now fails", "{{fpCode}}", 422, [["expired or invalid", 'errorMessage.startsWith("That code has expired")']]),
+
+  // expiry
+  fpExpire("Dev: age the code"),
+  fpForgot("Send a new code"),
+  fpReadCode("Read the new code"),
+  fpExpire("Dev: let 20 minutes pass"),
+  fpReset("The expired code fails", "{{fpCode}}", 422, [["expired or invalid", 'errorMessage === "That code has expired or isn\'t valid. Ask for a new one."']]),
+
+  // the reset
+  fpForgot("Send another code"),
+  fpReadCode("Read it"),
+  fpReset("Reset the password", "{{fpCode}}", 200, [["signed out everywhere", 'j.message.includes("signed out everywhere")']]),
+  req("The old session can't be refreshed", "POST", "/auth/refresh", {
+    headers: [{ key: "Cookie", value: "refresh_token={{fpOldRefresh}}" }],
+    status: 401,
+    description: "Every refresh token was deleted by the reset, so each device is signed out when its access token (at most 15 minutes) runs out.",
+  }),
+  fpReset("The code can't be used twice", "{{fpCode}}", 422, [["expired or invalid", 'errorMessage.startsWith("That code has expired")']]),
+  req("The old password no longer works", "POST", "/auth/signin", { body: { email: fpEmail, password: TEST_PASSWORD }, status: 401 }),
+  req("Sign in with the new password", "POST", "/auth/signin", {
+    body: { email: fpEmail, password: NEW_PASSWORD },
+    status: 200,
+    checks: [["session cookies set", 'pm.cookies.has("access_token") && pm.cookies.has("refresh_token")']],
+  }),
+];
+
+// ---------------------------------------------------------------------------
 // 17. Loan repayment rules
 
 const lrApply = (accountVar, extra = {}) => ({
@@ -3355,7 +3459,8 @@ const main = collection(
     folder("15. Payroll", "Paying other VergePay customers: adding payees by account number (KYC, validation, own wallet, duplicates), pay runs that are all or nothing (refusals before any money moves, insufficient funds, mixed currencies, inactive payees), idempotent retries including a lost reply, due dates by frequency, a concurrent race, and the payee's side (alert, balance, privacy, no reversal). Four fresh customers.", payroll),
     folder("16. Withdrawals", "Withdrawing to a Nigerian bank account through Flutterwave Transfers (the stand-in): banks, name enquiry and saved accounts, the fee split (half each, the customer's rounded down), refusals before any money moves, the wallet debited at once, idempotent retries including a lost reply, a webhook that isn't trusted, success, a bank failure refunded with its reason, Flutterwave refusing or unreachable, the daily limit (and a concurrent race on it), removing a bank account, and other users. A fresh customer.", withdrawals),
     folder("17. Loan repayment rules", "Auto-debit on the due date (collected; or not, with one alert a day), the late fee after 3 days' grace (charged once, ₦500 minimum), paying any amount (fees first, then the oldest installment, then the next), the payoff quote and the most you can pay, default at 90 days overdue (no new loans) and back to active once caught up, paying off, and paying ahead on a loan with interest (the last installment's principal paid down and part of its interest waived). A fresh borrower; the loan job is run through /dev/loans/run-jobs.", loanRules),
-    folder("18. Wrap-up", "The 2FA brute-force limit, resetting the test users, and logout.", wrapUp),
+    folder("18. Forgot password", "Resetting a forgotten password with an emailed 6-digit code: the same answer whether or not the account exists, one email a minute at most, 5 tries per code, the password rules, expiry after 15 minutes, a code that works once, and every session ended by the reset. A fresh customer; the code is read from the email log through /dev/emails/latest.", forgotPassword),
+    folder("19. Wrap-up", "The 2FA brute-force limit, resetting the test users, and logout.", wrapUp),
   ],
 );
 
