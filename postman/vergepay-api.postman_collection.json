@@ -44976,7 +44976,1677 @@
       ]
     },
     {
-      "name": "18. Wrap-up",
+      "name": "18. Forgot password",
+      "description": "Resetting a forgotten password with an emailed 6-digit code: the same answer whether or not the account exists, one email a minute at most, 5 tries per code, the password rules, expiry after 15 minutes, a code that works once, and every session ended by the reset. A fresh customer; the code is read from the email log through /dev/emails/latest.",
+      "item": [
+        {
+          "name": "New user: the forgetful customer (Femi)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"fpUsername\", \"fp_\" + Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/signup",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "signup"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{fpUsername}}\",\n  \"email\": \"{{fpUsername}}@vergepay.dev\",\n  \"password\": \"VergePay#Test2026\",\n  \"confirmPassword\": \"VergePay#Test2026\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "A fresh user for this run, so the the forgetful customer (Femi) steps start with no wallets.\n\n**Expect:** 201"
+          }
+        },
+        {
+          "name": "Sign in as the forgetful customer (Femi)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"session cookies set\", () => pm.expect(pm.cookies.has(\"access_token\") && pm.cookies.has(\"refresh_token\"), \"session cookies set\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/signin",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "signin"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{fpUsername}}@vergepay.dev\",\n  \"password\": \"VergePay#Test2026\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Switches the session to this run's the forgetful customer (Femi) user.\n\n**Expect:** 200\n\n**Checks:**\n- session cookies set"
+          }
+        },
+        {
+          "name": "Keep this session's refresh token (to check it ends)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "try { pm.collectionVariables.set(\"fpOldRefresh\", pm.cookies.get(\"refresh_token\")); } catch (e) {}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/users/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "users",
+                "me"
+              ]
+            },
+            "description": "**Expect:** 200"
+          }
+        },
+        {
+          "name": "Unknown email: the same answer",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 202\", () => pm.response.to.have.status(202));",
+                  "pm.test(\"202 with the usual message\", () => pm.expect(j.message.startsWith(\"If an account uses that email\"), \"202 with the usual message\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/password/forgot",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "password",
+                "forgot"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"nobody_{{fpUsername}}@vergepay.dev\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "**Expect:** 202\n\n**Checks:**\n- 202 with the usual message"
+          }
+        },
+        {
+          "name": "No email sent to the unknown address",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/dev/emails/latest?to=nobody_{{fpUsername}}@vergepay.dev",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "dev",
+                "emails",
+                "latest"
+              ],
+              "query": [
+                {
+                  "key": "to",
+                  "value": "nobody_{{fpUsername}}@vergepay.dev"
+                }
+              ]
+            },
+            "description": "**Expect:** 404"
+          }
+        },
+        {
+          "name": "Not an email address",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 422\", () => pm.response.to.have.status(422));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/password/forgot",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "password",
+                "forgot"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"femi\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "**Expect:** 422"
+          }
+        },
+        {
+          "name": "Forgot password: send a code",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 202\", () => pm.response.to.have.status(202));",
+                  "pm.test(\"the same answer whether or not the account exists\", () => pm.expect(j.message === \"If an account uses that email, we've sent it a code. It expires in 15 minutes.\", \"the same answer whether or not the account exists\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/password/forgot",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "password",
+                "forgot"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{fpUsername}}@vergepay.dev\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "**Expect:** 202\n\n**Checks:**\n- the same answer whether or not the account exists"
+          }
+        },
+        {
+          "name": "Read the code from the email",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"the subject starts with a 6-digit code, also in the body\", () => pm.expect(/^\\d{6} is your VergePay password reset code$/.test(j.subject) && j.text_body.includes(j.subject.slice(0, 6)), \"the subject starts with a 6-digit code, also in the body\").to.be.true);",
+                  "pm.test(\"queued to the worker\", () => pm.expect(j.status === \"queued\" || j.status === \"sent\", \"queued to the worker\").to.be.true);",
+                  "try { pm.collectionVariables.set(\"fpCode\", (j.subject.match(/^(\\d{6}) /) || [])[1]); } catch (e) {}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/dev/emails/latest?to={{fpUsername}}@vergepay.dev&kind=password_reset",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "dev",
+                "emails",
+                "latest"
+              ],
+              "query": [
+                {
+                  "key": "to",
+                  "value": "{{fpUsername}}@vergepay.dev"
+                },
+                {
+                  "key": "kind",
+                  "value": "password_reset"
+                }
+              ]
+            },
+            "description": "**Expect:** 200\n\n**Checks:**\n- the subject starts with a 6-digit code, also in the body\n- queued to the worker"
+          }
+        },
+        {
+          "name": "Ask again straight away (no second email within 60 seconds)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 202\", () => pm.response.to.have.status(202));",
+                  "pm.test(\"the same answer whether or not the account exists\", () => pm.expect(j.message === \"If an account uses that email, we've sent it a code. It expires in 15 minutes.\", \"the same answer whether or not the account exists\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/password/forgot",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "password",
+                "forgot"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{fpUsername}}@vergepay.dev\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "**Expect:** 202\n\n**Checks:**\n- the same answer whether or not the account exists"
+          }
+        },
+        {
+          "name": "Still the first code",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"the subject starts with a 6-digit code, also in the body\", () => pm.expect(/^\\d{6} is your VergePay password reset code$/.test(j.subject) && j.text_body.includes(j.subject.slice(0, 6)), \"the subject starts with a 6-digit code, also in the body\").to.be.true);",
+                  "pm.test(\"same code\", () => pm.expect(j.subject.slice(0, 6) === v(\"fpCode\"), \"same code\").to.be.true);",
+                  "try { pm.collectionVariables.set(\"fpCodeAgain\", (j.subject.match(/^(\\d{6}) /) || [])[1]); } catch (e) {}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/dev/emails/latest?to={{fpUsername}}@vergepay.dev&kind=password_reset",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "dev",
+                "emails",
+                "latest"
+              ],
+              "query": [
+                {
+                  "key": "to",
+                  "value": "{{fpUsername}}@vergepay.dev"
+                },
+                {
+                  "key": "kind",
+                  "value": "password_reset"
+                }
+              ]
+            },
+            "description": "**Expect:** 200\n\n**Checks:**\n- the subject starts with a 6-digit code, also in the body\n- same code"
+          }
+        },
+        {
+          "name": "Wrong code: 4 tries left",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"fpWrong\", String((Number(pm.collectionVariables.get(\"fpCode\")) + 1) % 1000000).padStart(6, \"0\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 422\", () => pm.response.to.have.status(422));",
+                  "pm.test(\"\\\"That code isn't right. You have 4 tries left.\\\"\", () => pm.expect(errorMessage === \"That code isn't right. You have 4 tries left.\", \"\\\"That code isn't right. You have 4 tries left.\\\"\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/password/reset",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "password",
+                "reset"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{fpUsername}}@vergepay.dev\",\n  \"code\": \"{{fpWrong}}\",\n  \"password\": \"VergePay#Reset2026\",\n  \"confirmPassword\": \"VergePay#Reset2026\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "**Expect:** 422\n\n**Checks:**\n- \"That code isn't right. You have 4 tries left.\""
+          }
+        },
+        {
+          "name": "Weak new password (refused before the code is checked)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 422\", () => pm.response.to.have.status(422));",
+                  "pm.test(\"password rules\", () => pm.expect(!!j.error.details.password, \"password rules\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/password/reset",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "password",
+                "reset"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{fpUsername}}@vergepay.dev\",\n  \"code\": \"{{fpCode}}\",\n  \"password\": \"short\",\n  \"confirmPassword\": \"short\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "**Expect:** 422\n\n**Checks:**\n- password rules"
+          }
+        },
+        {
+          "name": "Passwords don't match",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 422\", () => pm.response.to.have.status(422));",
+                  "pm.test(\"confirmPassword\", () => pm.expect(!!j.error.details.confirmPassword, \"confirmPassword\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/password/reset",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "password",
+                "reset"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{fpUsername}}@vergepay.dev\",\n  \"code\": \"{{fpCode}}\",\n  \"password\": \"VergePay#Reset2026\",\n  \"confirmPassword\": \"VergePay#Other2026\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "**Expect:** 422\n\n**Checks:**\n- confirmPassword"
+          }
+        },
+        {
+          "name": "Not 6 digits",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 422\", () => pm.response.to.have.status(422));",
+                  "pm.test(\"code\", () => pm.expect(!!j.error.details.code, \"code\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/password/reset",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "password",
+                "reset"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{fpUsername}}@vergepay.dev\",\n  \"code\": \"12ab\",\n  \"password\": \"VergePay#Reset2026\",\n  \"confirmPassword\": \"VergePay#Reset2026\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "**Expect:** 422\n\n**Checks:**\n- code"
+          }
+        },
+        {
+          "name": "Right code, wrong email",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 422\", () => pm.response.to.have.status(422));",
+                  "pm.test(\"looks expired or invalid\", () => pm.expect(errorMessage === \"That code has expired or isn't valid. Ask for a new one.\", \"looks expired or invalid\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/password/reset",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "password",
+                "reset"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"nobody_{{fpUsername}}@vergepay.dev\",\n  \"code\": \"{{fpCode}}\",\n  \"password\": \"VergePay#Reset2026\",\n  \"confirmPassword\": \"VergePay#Reset2026\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "**Expect:** 422\n\n**Checks:**\n- looks expired or invalid"
+          }
+        },
+        {
+          "name": "Wrong code: 3 tries left",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"fpWrong\", String((Number(pm.collectionVariables.get(\"fpCode\")) + 1) % 1000000).padStart(6, \"0\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 422\", () => pm.response.to.have.status(422));",
+                  "pm.test(\"3 left\", () => pm.expect(errorMessage === \"That code isn't right. You have 3 tries left.\", \"3 left\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/password/reset",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "password",
+                "reset"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{fpUsername}}@vergepay.dev\",\n  \"code\": \"{{fpWrong}}\",\n  \"password\": \"VergePay#Reset2026\",\n  \"confirmPassword\": \"VergePay#Reset2026\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "**Expect:** 422\n\n**Checks:**\n- 3 left"
+          }
+        },
+        {
+          "name": "Wrong code: 2 tries left",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"fpWrong\", String((Number(pm.collectionVariables.get(\"fpCode\")) + 1) % 1000000).padStart(6, \"0\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 422\", () => pm.response.to.have.status(422));",
+                  "pm.test(\"2 left\", () => pm.expect(errorMessage === \"That code isn't right. You have 2 tries left.\", \"2 left\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/password/reset",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "password",
+                "reset"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{fpUsername}}@vergepay.dev\",\n  \"code\": \"{{fpWrong}}\",\n  \"password\": \"VergePay#Reset2026\",\n  \"confirmPassword\": \"VergePay#Reset2026\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "**Expect:** 422\n\n**Checks:**\n- 2 left"
+          }
+        },
+        {
+          "name": "Wrong code: 1 try left",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"fpWrong\", String((Number(pm.collectionVariables.get(\"fpCode\")) + 1) % 1000000).padStart(6, \"0\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 422\", () => pm.response.to.have.status(422));",
+                  "pm.test(\"1 left\", () => pm.expect(errorMessage === \"That code isn't right. You have 1 try left.\", \"1 left\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/password/reset",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "password",
+                "reset"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{fpUsername}}@vergepay.dev\",\n  \"code\": \"{{fpWrong}}\",\n  \"password\": \"VergePay#Reset2026\",\n  \"confirmPassword\": \"VergePay#Reset2026\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "**Expect:** 422\n\n**Checks:**\n- 1 left"
+          }
+        },
+        {
+          "name": "Fifth wrong code: the code is used up",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"fpWrong\", String((Number(pm.collectionVariables.get(\"fpCode\")) + 1) % 1000000).padStart(6, \"0\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 422\", () => pm.response.to.have.status(422));",
+                  "pm.test(\"can't be used again\", () => pm.expect(errorMessage === \"That code isn't right, and it can't be used again. Ask for a new one.\", \"can't be used again\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/password/reset",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "password",
+                "reset"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{fpUsername}}@vergepay.dev\",\n  \"code\": \"{{fpWrong}}\",\n  \"password\": \"VergePay#Reset2026\",\n  \"confirmPassword\": \"VergePay#Reset2026\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "**Expect:** 422\n\n**Checks:**\n- can't be used again"
+          }
+        },
+        {
+          "name": "Even the right code now fails",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 422\", () => pm.response.to.have.status(422));",
+                  "pm.test(\"expired or invalid\", () => pm.expect(errorMessage.startsWith(\"That code has expired\"), \"expired or invalid\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/password/reset",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "password",
+                "reset"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{fpUsername}}@vergepay.dev\",\n  \"code\": \"{{fpCode}}\",\n  \"password\": \"VergePay#Reset2026\",\n  \"confirmPassword\": \"VergePay#Reset2026\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "**Expect:** 422\n\n**Checks:**\n- expired or invalid"
+          }
+        },
+        {
+          "name": "Dev: age the code",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/dev/password-reset/expire",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "dev",
+                "password-reset",
+                "expire"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{fpUsername}}@vergepay.dev\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Development only. Ages the code by 20 minutes: it expires, and the 60-second wait before another can be sent is over.\n\n**Expect:** 200"
+          }
+        },
+        {
+          "name": "Send a new code",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 202\", () => pm.response.to.have.status(202));",
+                  "pm.test(\"the same answer whether or not the account exists\", () => pm.expect(j.message === \"If an account uses that email, we've sent it a code. It expires in 15 minutes.\", \"the same answer whether or not the account exists\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/password/forgot",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "password",
+                "forgot"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{fpUsername}}@vergepay.dev\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "**Expect:** 202\n\n**Checks:**\n- the same answer whether or not the account exists"
+          }
+        },
+        {
+          "name": "Read the new code",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"the subject starts with a 6-digit code, also in the body\", () => pm.expect(/^\\d{6} is your VergePay password reset code$/.test(j.subject) && j.text_body.includes(j.subject.slice(0, 6)), \"the subject starts with a 6-digit code, also in the body\").to.be.true);",
+                  "try { pm.collectionVariables.set(\"fpCode\", (j.subject.match(/^(\\d{6}) /) || [])[1]); } catch (e) {}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/dev/emails/latest?to={{fpUsername}}@vergepay.dev&kind=password_reset",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "dev",
+                "emails",
+                "latest"
+              ],
+              "query": [
+                {
+                  "key": "to",
+                  "value": "{{fpUsername}}@vergepay.dev"
+                },
+                {
+                  "key": "kind",
+                  "value": "password_reset"
+                }
+              ]
+            },
+            "description": "**Expect:** 200\n\n**Checks:**\n- the subject starts with a 6-digit code, also in the body"
+          }
+        },
+        {
+          "name": "Dev: let 20 minutes pass",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/dev/password-reset/expire",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "dev",
+                "password-reset",
+                "expire"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{fpUsername}}@vergepay.dev\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Development only. Ages the code by 20 minutes: it expires, and the 60-second wait before another can be sent is over.\n\n**Expect:** 200"
+          }
+        },
+        {
+          "name": "The expired code fails",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 422\", () => pm.response.to.have.status(422));",
+                  "pm.test(\"expired or invalid\", () => pm.expect(errorMessage === \"That code has expired or isn't valid. Ask for a new one.\", \"expired or invalid\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/password/reset",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "password",
+                "reset"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{fpUsername}}@vergepay.dev\",\n  \"code\": \"{{fpCode}}\",\n  \"password\": \"VergePay#Reset2026\",\n  \"confirmPassword\": \"VergePay#Reset2026\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "**Expect:** 422\n\n**Checks:**\n- expired or invalid"
+          }
+        },
+        {
+          "name": "Send another code",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 202\", () => pm.response.to.have.status(202));",
+                  "pm.test(\"the same answer whether or not the account exists\", () => pm.expect(j.message === \"If an account uses that email, we've sent it a code. It expires in 15 minutes.\", \"the same answer whether or not the account exists\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/password/forgot",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "password",
+                "forgot"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{fpUsername}}@vergepay.dev\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "**Expect:** 202\n\n**Checks:**\n- the same answer whether or not the account exists"
+          }
+        },
+        {
+          "name": "Read it",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"the subject starts with a 6-digit code, also in the body\", () => pm.expect(/^\\d{6} is your VergePay password reset code$/.test(j.subject) && j.text_body.includes(j.subject.slice(0, 6)), \"the subject starts with a 6-digit code, also in the body\").to.be.true);",
+                  "try { pm.collectionVariables.set(\"fpCode\", (j.subject.match(/^(\\d{6}) /) || [])[1]); } catch (e) {}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/dev/emails/latest?to={{fpUsername}}@vergepay.dev&kind=password_reset",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "dev",
+                "emails",
+                "latest"
+              ],
+              "query": [
+                {
+                  "key": "to",
+                  "value": "{{fpUsername}}@vergepay.dev"
+                },
+                {
+                  "key": "kind",
+                  "value": "password_reset"
+                }
+              ]
+            },
+            "description": "**Expect:** 200\n\n**Checks:**\n- the subject starts with a 6-digit code, also in the body"
+          }
+        },
+        {
+          "name": "Reset the password",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"signed out everywhere\", () => pm.expect(j.message.includes(\"signed out everywhere\"), \"signed out everywhere\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/password/reset",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "password",
+                "reset"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{fpUsername}}@vergepay.dev\",\n  \"code\": \"{{fpCode}}\",\n  \"password\": \"VergePay#Reset2026\",\n  \"confirmPassword\": \"VergePay#Reset2026\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "**Expect:** 200\n\n**Checks:**\n- signed out everywhere"
+          }
+        },
+        {
+          "name": "The old session can't be refreshed",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 401\", () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "refresh_token={{fpOldRefresh}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/refresh",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "refresh"
+              ]
+            },
+            "description": "Every refresh token was deleted by the reset, so each device is signed out when its access token (at most 15 minutes) runs out.\n\n**Expect:** 401"
+          }
+        },
+        {
+          "name": "The code can't be used twice",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 422\", () => pm.response.to.have.status(422));",
+                  "pm.test(\"expired or invalid\", () => pm.expect(errorMessage.startsWith(\"That code has expired\"), \"expired or invalid\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/password/reset",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "password",
+                "reset"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{fpUsername}}@vergepay.dev\",\n  \"code\": \"{{fpCode}}\",\n  \"password\": \"VergePay#Reset2026\",\n  \"confirmPassword\": \"VergePay#Reset2026\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "**Expect:** 422\n\n**Checks:**\n- expired or invalid"
+          }
+        },
+        {
+          "name": "The old password no longer works",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 401\", () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/signin",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "signin"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{fpUsername}}@vergepay.dev\",\n  \"password\": \"VergePay#Test2026\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "**Expect:** 401"
+          }
+        },
+        {
+          "name": "Sign in with the new password",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"session cookies set\", () => pm.expect(pm.cookies.has(\"access_token\") && pm.cookies.has(\"refresh_token\"), \"session cookies set\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/signin",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "signin"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{fpUsername}}@vergepay.dev\",\n  \"password\": \"VergePay#Reset2026\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "**Expect:** 200\n\n**Checks:**\n- session cookies set"
+          }
+        }
+      ]
+    },
+    {
+      "name": "19. Wrap-up",
       "description": "The 2FA brute-force limit, resetting the test users, and logout.",
       "item": [
         {

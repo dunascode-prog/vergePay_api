@@ -1,5 +1,6 @@
 import { pool } from "../db/connectDB.js";
 import bcrypt from "bcrypt";
+import { BCRYPT_ROUNDS, passwordSchema } from "../utils/passwordRules.js";
 import z from "zod";
 import logger from "../logger.js";
 import crypto from "crypto";
@@ -41,17 +42,7 @@ export const signUp = async (req, res, nex) => {
         ),
 
       email: z.string().trim().toLowerCase().email("Invalid email address."),
-      password: z
-        .string()
-        .min(12, "Password must be at least 12 characters.")
-        .max(128)
-        .regex(/[A-Z]/, "Password must contain an uppercase letter.")
-        .regex(/[a-z]/, "Password must contain a lowercase letter.")
-        .regex(/[0-9]/, "Password must contain a number.")
-        .regex(
-          /[!@#$%^&*(),.?":{}|<>_\-+=/\\[\]';`~]/,
-          "Password must contain a special character.",
-        ),
+      password: passwordSchema,
       confirmPassword: z.string(),
     })
     .refine((data) => data.password === data.confirmPassword, {
@@ -67,7 +58,7 @@ export const signUp = async (req, res, nex) => {
     throw err;
   }
   const { username, email, password } = validation.data;
-  const hashedPassword = await bcrypt.hash(password, 12);
+  const hashedPassword = await bcrypt.hash(password, BCRYPT_ROUNDS);
   const requestHash = crypto
     .createHash("sha256")
     .update(JSON.stringify(req.body))

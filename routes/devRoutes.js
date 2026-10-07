@@ -13,6 +13,8 @@ import {
   decideOwnLoanApplication,
   backdateLoan,
   runLoanJobsNow,
+  latestEmail,
+  expirePasswordResetCode,
 } from "../controllers/devController.js";
 import { idempotency } from "../utils/idempotency.js";
 import { verifyAccessToken, verifyAccessTokenAllowPending } from "../utils/jwt.js";
@@ -36,5 +38,8 @@ devRouter.post("/brokerage/run-scheduler", verifyAccessToken, runBrokerageSchedu
 devRouter.post("/loans/applications/:applicationId/decide", verifyAccessToken, decideOwnLoanApplication);
 devRouter.post("/loans/:loanId/backdate", verifyAccessToken, backdateLoan);
 devRouter.post("/loans/run-jobs", verifyAccessToken, runLoanJobsNow);
+// test addresses only, and no session: password resets happen signed out
+devRouter.get("/emails/latest", latestEmail);
+devRouter.post("/password-reset/expire", expirePasswordResetCode);
 
 export default devRouter;
