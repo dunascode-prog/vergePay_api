@@ -17,6 +17,7 @@
     "start:flw-sandbox": "node postman/start-api-for-sandbox.mjs",
     "test:postman": "node postman/run-suite.mjs",
     "test:realtime": "node postman/realtime-check.mjs",
+    "test:assistant": "node postman/assistant-eval.mjs && node postman/assistant-eval.mjs --fresh",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "dunascode",
@@ -39,6 +40,7 @@
   },
   "dependencies": {
     "@hookform/resolvers": "^5.4.0",
+    "@huggingface/transformers": "^4.3.1",
     "bullmq": "^6.3.9",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",

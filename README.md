@@ -138,6 +138,13 @@ Amortization ([`services/amortization.js`](services/amortization.js)) rounds the
 
 ---
 
+### An assistant that can't make up numbers
+"Ask VergePay" ([`services/assistant/`](services/assistant/)) answers questions about a customer's own money with a free, open model running inside the API. No paid AI service is involved, and nothing leaves the server.
+- **Understanding:** a small pretrained sentence-embedding model, [bge-small-en-v1.5](https://huggingface.co/BAAI/bge-small-en-v1.5) (MIT licence, about 34 MB), runs on the CPU through transformers.js. It matches a question to one of 22 kinds of question VergePay can answer, helped by a few money-word cues. On 30 questions it had never seen, it picked the right one 29 times and was never confidently wrong; off-topic questions are declined (`postman/assistant-eval.mjs`).
+- **Answering:** the figures are always computed by VergePay's own code from the customer's data, the same rules the app's screens use: who owes them, what's overdue, spending by kind and period, profit, balances, payroll, goals, loans and payoff, recurring revenue. Periods like "last month", "in September" or "Q3" are understood.
+- **Optional open chat model:** point `OLLAMA_URL` at an Ollama server (for example Qwen 2.5 3B, Apache 2.0) and it rewords answers more naturally and helps with unclear questions. Its reply is used only if it keeps every figure VergePay computed and adds none. It chooses only among the small model's top candidates, and when it chose, the answer says which question it's answering.
+- **Recommendations:** "what to do next" is decided by plain rules, never a model. Examples: chase an overdue client (with a reminder button), top up before a loan payment, run payroll that's due, a goal falling behind, unsent drafts, one client bringing most of the revenue, turning on 2FA. Each can be dismissed for a while.
+
 ## Architecture
 
 ```mermaid
@@ -218,6 +225,10 @@ The full designs are in [`documentation/`](documentation/): the API design (`Fin
 | POST | `/v1/users/me/email` | Change the email: the current password (and a recent 2FA code if 2FA is on), then a 6-digit code goes to the new address |
 | POST | `/v1/users/me/email/confirm` | The code (5 tries). The email changes, the old address gets a notice, and the session stays |
 | DELETE | `/v1/users/me/email` | Cancel an email change in progress |
+| POST | `/v1/assistant/ask` | "Ask VergePay": a question in, an answer from the customer's own figures (with actions and follow-up questions) |
+| GET | `/v1/assistant/suggestions` | Starter questions, chosen from what's in the customer's data |
+| GET | `/v1/recommendations` | "What to do next", ranked by plain rules, each with one action |
+| POST | `/v1/recommendations/:key/dismiss` | Hide one for 1–90 days (7 by default) |
 | PUT / DELETE | `/v1/users/me/photo` | Profile photo: the JPG or PNG itself as the body (2 MB at most). Stored in Postgres as a 512 × 512 JPEG; the profile returns `photo_url` |
 | GET | `/v1/users/me/photo/:photoId` | The photo, to its owner only. Cached for good: a new photo gets a new id |
 | POST | `/v1/kyc/submissions` | Verify identity by BVN, legal name and date of birth. `202`, decided asynchronously (the client polls). The BVN is stored encrypted in the vault, never returned. On approval the legal name moves onto the profile and locks. A sandbox provider decides in development; a real one (Dojah, Smile ID, Prembly) plugs into the same decision function |
@@ -389,7 +400,7 @@ An alert is written for every settled movement on a customer's wallet: a credit 
 
 ## Testing
 
-The whole API is exercised by a Postman suite, [`postman/vergepay-api.postman_collection.json`](postman/vergepay-api.postman_collection.json): **1,027 requests and 1,733 assertions**, grouped into 22 folders from sign-up to brokerage disconnection. It isn't just happy paths:
+The whole API is exercised by a Postman suite, [`postman/vergepay-api.postman_collection.json`](postman/vergepay-api.postman_collection.json): **1,055 requests and 1,781 assertions**, grouped into 23 folders from sign-up to brokerage disconnection. It isn't just happy paths:
 
 - **Every edge case:** validation, wrong owner, wrong state (`409`), insufficient funds, replayed keys, and retries after a simulated crash.
 - **Races:** simultaneous payments, refunds, repayments and sign-ins, fired at the same instant from test scripts.
@@ -404,6 +415,7 @@ The whole API is exercised by a Postman suite, [`postman/vergepay-api.postman_co
 - **Forgot password:** the same answer for an unknown email (and no email sent), one email a minute, wrong codes counting down to a used-up code, the password rules, an expired code, a code that works once, the old session refused, and only the new password signing in.
 - **Changing email:** a wrong password, your own address and one already in use refused with no email sent, the change pending until confirmed, wrong codes, the old address told, the old address no longer signing in, expiry, cancelling, and a recent 2FA code required when 2FA is on.
 - **Profile photos:** a GIF, a text file named .png, a tiny image, JSON and a file over 2 MB all refused with nothing stored; the stored file checked to be a 512 × 512 JPEG with the camera metadata gone; another customer refused it; replacing and removing make the old link `404`.
+- **Ask VergePay and recommendations:** answers checked word for word against the customer's data (who owes the most, overdue, a client by name, spending, balance), an off-topic question declined, input validated; an overdue invoice ranked first with a reminder action, and dismissing hides it. Matching quality is measured separately: `npm run test:assistant` (57/58 seen, 29/30 unseen questions).
 - **Ledger invariants** checked across the database after each money-moving folder, including that every goal's money sits in its own account and only ever moves to and from its owner's wallets, and that every payroll payment matches its run, its payee and its ledger transaction.
 - **Invoicing clients:** the client profile (validation, search by industry, clearing a field, archive and restore) and a client's payment record and health, drafts and their rounding, sending and email (built but not sent: `EMAIL_TRANSPORT=json`), the reminder throttle and reminder counts, an invoice made overdue (dev backdate), what the public pay page hides, checkout paid, declined, tampered and paid twice at once, the webhook, cancelling, and paying a link from a wallet.
 - **Live updates:** Newman can't open sockets, so [`postman/realtime-check.mjs`](postman/realtime-check.mjs) (`npm run test:realtime`) connects real WebSockets for two customers and checks 17 things: who may connect, alerts and balance events arriving live on both sides and in a second tab, a rolled-back transfer sending nothing, one customer never seeing another's events, and refusal after sign-out.
@@ -415,7 +427,7 @@ npm run flw:stand-in           # terminal 1: Flutterwave stand-in on :9999
 npm run alpaca:stand-in        # terminal 2: Alpaca stand-in on :9998
 npm run start:with-stand-in    # terminal 3: the API, pointed at the stand-ins
 npm run worker:with-stand-in   # terminal 4: the background worker (needs REDIS_URL)
-npm run test:postman           # terminal 5: runs all 1,027 requests with Newman
+npm run test:postman           # terminal 5: runs all 1,055 requests with Newman
 npm run test:realtime          # then: the live WebSocket checks (API_URL=... for another port)
 ```
 

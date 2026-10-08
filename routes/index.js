@@ -16,6 +16,7 @@ import cardRouter from "./cardRoutes.js";
 import webhookRouter from "./webhookRoutes.js";
 import { brokerageRouter, holdingRouter } from "./brokerageRoutes.js";
 import notificationRouter from "./notificationRoutes.js";
+import { assistantRouter, recommendationRouter } from "./assistantRoutes.js";
 import devRouter from "./devRoutes.js";
 import testRoute from "./testRoute.js";
 import env from "../env.js";
@@ -31,6 +32,8 @@ export default function registerRoutes(app) {
   app.use("/v1/clients", clientRouter);
   app.use("/v1/recurring-plans", recurringPlanRouter);
   app.use("/v1/goals", goalRouter);
+  app.use("/v1/assistant", assistantRouter);
+  app.use("/v1/recommendations", recommendationRouter);
   app.use("/v1/payees", payeeRouter);
   app.use("/v1/payroll", payrollRouter);
   app.use("/v1/banks", bankRouter);
