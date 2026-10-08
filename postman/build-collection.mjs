@@ -3317,6 +3317,67 @@ const profilePhoto = [
 ];
 
 // ---------------------------------------------------------------------------
+// 21. Ask VergePay and recommendations (a fresh user)
+
+const askQ = (name, question, checks, opts = {}) =>
+  req(name, "POST", "/assistant/ask", { body: { question }, status: 200, checks, ...opts });
+const recs = (name, checks, save = []) => req(name, "GET", "/recommendations?limit=10", { status: 200, checks, save });
+
+const assistant = [
+  ...newUser("as", "the customer asking questions (Bisi)"),
+  kycVerify(),
+  openAccount("Bisi: business wallet", "asBizId", { purpose: "business" }),
+  req("Starter questions", "GET", "/assistant/suggestions", {
+    status: 200,
+    checks: [["\"What should I do next?\" first; the open model is off", 'j.questions[0] === "What should I do next?" && j.open_model === false']],
+  }),
+  recs("Recommendations for a new customer: turn on 2FA", [["includes 2fa, not kyc (verified)", 'j.data.some((r) => r.key === "2fa") && !j.data.some((r) => r.key === "kyc")']]),
+
+  // refused questions
+  req("Ask nothing", "POST", "/assistant/ask", { body: { question: " " }, status: 422 }),
+  req("Ask something too long", "POST", "/assistant/ask", { pre: ['pm.collectionVariables.set("asLong", "why ".repeat(80));'], body: { question: "{{asLong}}" }, status: 422 }),
+  req("Unknown field", "POST", "/assistant/ask", { body: { question: "hi", extra: 1 }, status: 422 }),
+
+  askQ("Who owes me the most? (nobody yet)", "who owes me the most?", [
+    ["matched, answered from the data", 'j.intent === "top_debtor" && j.answer === "Nobody owes you anything right now."'],
+    ["matched by the small model, worded by VergePay", '["model", "words"].includes(j.matched_by) && j.worded_by === "vergepay"'],
+  ]),
+
+  // a client who's 9 days late
+  req("Add client Kola Ventures", "POST", "/clients", { body: { name: "Kola Ventures", email: "pay@kola.test" }, status: 201, save: [["asClientId", "j.client_id"]] }),
+  req("Invoice Kola ₦50,000.00", "POST", "/invoices", {
+    pre: ['pm.collectionVariables.set("asDue", new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10));'],
+    body: { issuer_account_id: "{{asBizId}}", client_id: "{{asClientId}}", items: [{ description: "Brand strategy", quantity: 1, unit_amount_minor: 5000000 }], due_date: "{{asDue}}" },
+    status: 201,
+    save: [["asInvoiceId", "j.invoice_id"]],
+  }),
+  req("Send it", "POST", "/invoices/{{asInvoiceId}}/send", { status: 200 }),
+  req("Dev: due 9 days ago", "POST", "/dev/invoices/{{asInvoiceId}}/backdate", { body: { days: 9 }, status: 200 }),
+
+  askQ("Who owes me the most?", "who owes me the most?", [
+    ["Kola Ventures, ₦50,000.00, overdue", 'j.intent === "top_debtor" && j.answer.startsWith("Kola Ventures owes you the most: ₦50,000.00 across 1 invoice, ₦50,000.00 of it overdue")'],
+    ["a reminder action for that invoice", 'j.actions[0].kind === "remind" && j.actions[0].invoice_id === v("asInvoiceId")'],
+  ]),
+  askQ("Which invoices are overdue?", "any late invoices?", [["overdue, 9 days late", 'j.intent === "overdue" && j.answer.includes("Kola Ventures · ₦50,000.00 · 9 days late")']]),
+  askQ("How much does Kola owe me? (a client by name)", "how much does kola owe me", [["owed by that client", 'j.intent !== null && j.answer.startsWith("Kola Ventures owes you ₦50,000.00")']]),
+  askQ("Does Kola pay on time?", "can I trust kola ventures to pay on time", [["client health", 'j.intent === "client_health" && j.answer.startsWith("Kola Ventures")']]),
+  askQ("How much did I spend this month? (nothing)", "how much did I spend this month", [["spending: nothing", 'j.intent === "spending" && j.answer === "Nothing went out this month."']]),
+  askQ("What's my balance?", "what's my balance", [["the business wallet", 'j.intent === "balance" && j.answer.includes("Business wallet (NGN): ₦0.00")']]),
+  askQ("Hello", "hi", [["a greeting with suggestions", 'j.intent === "greeting" && j.answer.startsWith("Hi ") && j.followups.length === 3']]),
+  askQ("Off-topic: not answered", "what's the weather in lagos", [["no intent; three questions offered", 'j.intent === null && j.followups.length === 3']]),
+
+  // recommendations, and dismissing one
+  recs("Recommendations: chase Kola first", [
+    ["the overdue invoice comes first, with a reminder", 'j.data[0].key === "overdue:" + v("asInvoiceId") && j.data[0].action.kind === "remind" && j.data[0].title === "Chase Kola Ventures: ₦50,000.00 is 9 days late"'],
+  ]),
+  askQ("What should I do next?", "what should I do next", [["the recommendations, Kola first", 'j.intent === "next_steps" && j.answer.includes("1. Chase Kola Ventures")']]),
+  req("Dismiss it for 3 days", "POST", "/recommendations/overdue:{{asInvoiceId}}/dismiss", { body: { days: 3 }, status: 200, checks: [["dismissed", "j.dismissed_for_days === 3"]] }),
+  recs("It's gone (for now)", [["not listed", '!j.data.some((r) => r.key === "overdue:" + v("asInvoiceId"))']]),
+  req("Dismiss for too long", "POST", "/recommendations/2fa/dismiss", { body: { days: 365 }, status: 422 }),
+  req("Dismiss with the default (7 days)", "POST", "/recommendations/2fa/dismiss", { status: 200, checks: [["7 days", "j.dismissed_for_days === 7"]] }),
+];
+
+// ---------------------------------------------------------------------------
 // 17. Loan repayment rules
 
 const lrApply = (accountVar, extra = {}) => ({
@@ -3615,7 +3676,8 @@ const main = collection(
     folder("18. Forgot password", "Resetting a forgotten password with an emailed 6-digit code: the same answer whether or not the account exists, one email a minute at most, 5 tries per code, the password rules, expiry after 15 minutes, a code that works once, and every session ended by the reset. A fresh customer; the code is read from the email log through /dev/emails/latest.", forgotPassword),
     folder("19. Changing email", "Changing the email address: the password (and a recent 2FA code when 2FA is on) checked before anything is sent, a code to the new address, the change pending until it's confirmed, 5 tries, the old address told with the new one masked, still signed in, signing in with the new address only, expiry and cancelling. A fresh customer.", emailChange),
     folder("20. Profile photo", "Uploading a profile photo, kept in Postgres: JPG or PNG only, checked by its bytes, 2 MB at most, at least 100 × 100; stored as a 512 × 512 JPEG with the metadata stripped; fetched only by its owner, cached for good under a URL that changes with each photo; replacing and removing. Two fresh customers.", profilePhoto),
-    folder("21. Wrap-up", "The 2FA brute-force limit, resetting the test users, and logout.", wrapUp),
+    folder("21. Ask VergePay and recommendations", "The assistant answers from the customer's own data (who owes them, what's overdue, a client by name, spending, balance), declines off-topic questions, and validates input; recommendations rank an overdue invoice first with a reminder action, and a dismissed one stays hidden. The small model runs in the API; the optional open model is off here. A fresh customer.", assistant),
+    folder("22. Wrap-up", "The 2FA brute-force limit, resetting the test users, and logout.", wrapUp),
   ],
 );
 

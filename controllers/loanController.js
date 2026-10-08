@@ -293,7 +293,7 @@ const OWED = `(s.late_fee_minor - s.late_fee_paid_minor + s.interest_minor - s.i
 
 // A borrower's loans, and one of them, with the next installment, what's
 // due now (in the borrower's timezone) and how late it is.
-const LOAN_WITH_PROGRESS = `
+export const LOAN_WITH_PROGRESS = `
     SELECT ${LOAN_COLUMNS},
            (SELECT count(*)::int FROM loan_repayment_schedule s
             WHERE s.loan_id = l.loan_id AND s.paid_flag) AS installments_paid,

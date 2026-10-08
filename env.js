@@ -46,9 +46,19 @@ const env = {
     lockoutDurationMinutesSignUp:
       parseInt(process.env.LOCKOUT_DURATION_MINUTES_SIGNUP, 10) || 15,
   },
+  // Optional open chat model for "Ask VergePay" (services/assistant/llm.js),
+  // served by Ollama on a server you run. Off unless OLLAMA_URL is set.
   ai: {
-    apiKey: process.env.OLLAMA_KEY,
-    model: process.env.OLLAMA_MODEL || "claude-sonnet-4-6",
+    ollamaUrl: process.env.OLLAMA_URL,
+    ollamaApiKey: process.env.OLLAMA_KEY, // only if the server sits behind a key
+    model: process.env.OLLAMA_MODEL || "qwen2.5:3b",
+    timeoutMs: parseInt(process.env.OLLAMA_TIMEOUT_MS, 10) || 12_000,
+  },
+  // The assistant's own small model (services/assistant/matcher.js), run in
+  // this process: a free sentence-embedding model, downloaded once (~34 MB).
+  assistant: {
+    embeddingModel: process.env.ASSISTANT_EMBEDDING_MODEL || "Xenova/bge-small-en-v1.5",
+    modelCacheDir: process.env.ASSISTANT_MODEL_CACHE || "./.model-cache",
   },
   corsOrigin: process.env.CORS_ORIGIN || "http://localhost:3000",
   // The web app's public address, for links in emails and on invoices

@@ -155,6 +155,19 @@ export const photoLimiter = rateLimit({
   },
 });
 
+// "Ask VergePay": each question loads the customer's figures (and may call
+// the open model), so a steady chat pace per user, not a flood.
+export const assistantLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 60,
+  keyGenerator: (req) => req.user.sub,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req, res, next) => {
+    next(new TooManyRequestsError({ message: "You've asked a lot of questions in a short time. Please try again in a few minutes." }));
+  },
+});
+
 export const passwordResetLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 30,
