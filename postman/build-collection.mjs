@@ -100,6 +100,8 @@ const expected = []; // { collection, folder, rows: [...] }
 //   totp         true = generate {{totpCode}} first (2FA steps)
 //   rawUrl       a whole URL from a variable (e.g. "{{authorizationUrl}}") instead of base + path
 //   noRedirect   don't follow redirects, so the redirect itself can be checked
+//   file         a file to send as the body (path from the repo root, e.g. postman/fixtures/photo.jpg)
+//   contentType  the Content-Type for raw or file bodies (default application/json for raw)
 //   body, raw, headers, pre, tests, description, base
 function req(name, method, path, opts = {}) {
   const {
@@ -118,11 +120,16 @@ function req(name, method, path, opts = {}) {
     base = "{{baseUrl}}",
     rawUrl,
     noRedirect,
+    file,
+    contentType,
   } = opts;
   if (status === undefined) throw new Error(`${name}: every request needs an expected status`);
 
   const preScript = [...pre];
-  const header = [...(body || raw ? [JSON_HEADER] : []), ...headers];
+  const header = [
+    ...(contentType ? [{ key: "Content-Type", value: contentType }] : body || raw ? [JSON_HEADER] : []),
+    ...headers,
+  ];
   if (idem) {
     const [mode, variable = "idempotencyKey"] = idem.split(":");
     if (mode === "new") preScript.unshift(`pm.collectionVariables.set(${JSON.stringify(variable)}, pm.variables.replaceIn("{{$guid}}"));`);
@@ -147,6 +154,7 @@ function req(name, method, path, opts = {}) {
   const request = { method, header, url: rawUrl ?? buildUrl(base, path) };
   const bodyText = raw ?? (body !== undefined ? rawBody(body) : undefined);
   if (bodyText !== undefined) request.body = { mode: "raw", raw: bodyText, options: { raw: { language: "json" } } };
+  if (file) request.body = { mode: "file", file: { src: file } };
 
   counter += 1;
   const checkLabels = [...checks.map(([label]) => label), ...(opts.extraCheckLabels ?? [])];
@@ -3060,6 +3068,255 @@ const withdrawals = [
 ];
 
 // ---------------------------------------------------------------------------
+// 18. Forgot password (a fresh user)
+
+const NEW_PASSWORD = "VergePay#Reset2026";
+const fpEmail = "{{fpUsername}}@vergepay.dev";
+const fpForgot = (name, opts = {}) =>
+  req(name, "POST", "/auth/password/forgot", {
+    body: { email: fpEmail },
+    status: 202,
+    checks: [["the same answer whether or not the account exists", 'j.message === "If an account uses that email, we\'ve sent it a code. It expires in 15 minutes."']],
+    ...opts,
+  });
+// reads the newest reset email the way the customer would, and keeps its code
+const fpReadCode = (name, variable = "fpCode", extraChecks = []) =>
+  req(name, "GET", `/dev/emails/latest?to=${fpEmail}&kind=password_reset`, {
+    status: 200,
+    save: [[variable, '(j.subject.match(/^(\\d{6}) /) || [])[1]']],
+    checks: [
+      ["the subject starts with a 6-digit code, also in the body", "/^\\d{6} is your VergePay password reset code$/.test(j.subject) && j.text_body.includes(j.subject.slice(0, 6))"],
+      ...extraChecks,
+    ],
+  });
+const fpReset = (name, code, status, checks, opts = {}) =>
+  req(name, "POST", "/auth/password/reset", {
+    body: { email: fpEmail, code, password: NEW_PASSWORD, confirmPassword: NEW_PASSWORD, ...(opts.body ?? {}) },
+    status,
+    checks,
+    description: opts.description ?? "",
+  });
+const fpExpire = (name) => req(name, "POST", "/dev/password-reset/expire", { body: { email: fpEmail }, status: 200, description: "Development only. Ages the code by 20 minutes: it expires, and the 60-second wait before another can be sent is over." });
+// any 6 digits except the real code
+const wrongCode = 'pm.collectionVariables.set("fpWrong", String((Number(pm.collectionVariables.get("fpCode")) + 1) % 1000000).padStart(6, "0"));';
+
+const forgotPassword = [
+  ...newUser("fp", "the forgetful customer (Femi)"),
+  req("Keep this session's refresh token (to check it ends)", "GET", "/users/me", {
+    status: 200,
+    save: [["fpOldRefresh", 'pm.cookies.get("refresh_token")']],
+  }),
+  req("Unknown email: the same answer", "POST", "/auth/password/forgot", {
+    body: { email: "nobody_{{fpUsername}}@vergepay.dev" },
+    status: 202,
+    checks: [["202 with the usual message", 'j.message.startsWith("If an account uses that email")']],
+  }),
+  req("No email sent to the unknown address", "GET", "/dev/emails/latest?to=nobody_{{fpUsername}}@vergepay.dev", { status: 404 }),
+  req("Not an email address", "POST", "/auth/password/forgot", { body: { email: "femi" }, status: 422 }),
+
+  fpForgot("Forgot password: send a code"),
+  fpReadCode("Read the code from the email", "fpCode", [["queued to the worker", 'j.status === "queued" || j.status === "sent"']]),
+  fpForgot("Ask again straight away (no second email within 60 seconds)"),
+  fpReadCode("Still the first code", "fpCodeAgain", [["same code", 'j.subject.slice(0, 6) === v("fpCode")']]),
+
+  // wrong codes, and the rules
+  req("Wrong code: 4 tries left", "POST", "/auth/password/reset", {
+    pre: [wrongCode],
+    body: { email: fpEmail, code: "{{fpWrong}}", password: NEW_PASSWORD, confirmPassword: NEW_PASSWORD },
+    status: 422,
+    checks: [["\"That code isn't right. You have 4 tries left.\"", 'errorMessage === "That code isn\'t right. You have 4 tries left."']],
+  }),
+  fpReset("Weak new password (refused before the code is checked)", "{{fpCode}}", 422, [["password rules", "!!j.error.details.password"]], { body: { password: "short", confirmPassword: "short" } }),
+  fpReset("Passwords don't match", "{{fpCode}}", 422, [["confirmPassword", "!!j.error.details.confirmPassword"]], { body: { confirmPassword: "VergePay#Other2026" } }),
+  fpReset("Not 6 digits", "12ab", 422, [["code", "!!j.error.details.code"]]),
+  fpReset("Right code, wrong email", "{{fpCode}}", 422, [["looks expired or invalid", 'errorMessage === "That code has expired or isn\'t valid. Ask for a new one."']], { body: { email: "nobody_{{fpUsername}}@vergepay.dev" } }),
+  ...[3, 2, 1].map((left) =>
+    req(`Wrong code: ${left} ${left === 1 ? "try" : "tries"} left`, "POST", "/auth/password/reset", {
+      pre: [wrongCode],
+      body: { email: fpEmail, code: "{{fpWrong}}", password: NEW_PASSWORD, confirmPassword: NEW_PASSWORD },
+      status: 422,
+      checks: [[`${left} left`, `errorMessage === "That code isn't right. You have ${left} ${left === 1 ? "try" : "tries"} left."`]],
+    }),
+  ),
+  req("Fifth wrong code: the code is used up", "POST", "/auth/password/reset", {
+    pre: [wrongCode],
+    body: { email: fpEmail, code: "{{fpWrong}}", password: NEW_PASSWORD, confirmPassword: NEW_PASSWORD },
+    status: 422,
+    checks: [["can't be used again", 'errorMessage === "That code isn\'t right, and it can\'t be used again. Ask for a new one."']],
+  }),
+  fpReset("Even the right code now fails", "{{fpCode}}", 422, [["expired or invalid", 'errorMessage.startsWith("That code has expired")']]),
+
+  // expiry
+  fpExpire("Dev: age the code"),
+  fpForgot("Send a new code"),
+  fpReadCode("Read the new code"),
+  fpExpire("Dev: let 20 minutes pass"),
+  fpReset("The expired code fails", "{{fpCode}}", 422, [["expired or invalid", 'errorMessage === "That code has expired or isn\'t valid. Ask for a new one."']]),
+
+  // the reset
+  fpForgot("Send another code"),
+  fpReadCode("Read it"),
+  fpReset("Reset the password", "{{fpCode}}", 200, [["signed out everywhere", 'j.message.includes("signed out everywhere")']]),
+  req("The old session can't be refreshed", "POST", "/auth/refresh", {
+    headers: [{ key: "Cookie", value: "refresh_token={{fpOldRefresh}}" }],
+    status: 401,
+    description: "Every refresh token was deleted by the reset, so each device is signed out when its access token (at most 15 minutes) runs out.",
+  }),
+  fpReset("The code can't be used twice", "{{fpCode}}", 422, [["expired or invalid", 'errorMessage.startsWith("That code has expired")']]),
+  req("The old password no longer works", "POST", "/auth/signin", { body: { email: fpEmail, password: TEST_PASSWORD }, status: 401 }),
+  req("Sign in with the new password", "POST", "/auth/signin", {
+    body: { email: fpEmail, password: NEW_PASSWORD },
+    status: 200,
+    checks: [["session cookies set", 'pm.cookies.has("access_token") && pm.cookies.has("refresh_token")']],
+  }),
+];
+
+// ---------------------------------------------------------------------------
+// 19. Changing the email address (a fresh user)
+
+const ecNew = "{{ecUsername}}_new@vergepay.dev";
+const ecOld = "{{ecUsername}}@vergepay.dev";
+const ecStart = (name, body, status, checks = [], opts = {}) =>
+  req(name, "POST", "/users/me/email", { body: { new_email: ecNew, password: TEST_PASSWORD, ...body }, status, checks, ...opts });
+const ecReadCode = (name) =>
+  req(name, "GET", `/dev/emails/latest?to=${ecNew}&kind=email_change`, {
+    status: 200,
+    save: [["ecCode", "j.subject.slice(0, 6)"]],
+    checks: [["a 6-digit code to the NEW address", "/^\\d{6} is your VergePay email confirmation code$/.test(j.subject)"]],
+  });
+const ecWrong = 'pm.collectionVariables.set("ecWrong", String((Number(pm.collectionVariables.get("ecCode")) + 1) % 1000000).padStart(6, "0"));';
+const ecMe = (name, checks) => req(name, "GET", "/users/me", { status: 200, checks });
+
+const emailChange = [
+  ...newUser("ec", "the customer changing email (Chidi)"),
+  ecMe("No change in progress", [["pending_email is null", "j.pending_email === null"]]),
+
+  // refused before any email is sent
+  ecStart("Wrong password", { password: "Wrong#Password2026" }, 422, [["\"That password isn't right.\"", 'j.error.details.password[0] === "That password isn\'t right."']]),
+  ecStart("Not an email address", { new_email: "chidi" }, 422, [["new_email", "!!j.error.details.new_email"]]),
+  ecStart("No password", { password: undefined }, 422, [["password", "!!j.error.details.password"]], { body: { new_email: ecNew } }),
+  ecStart("Your own address", { new_email: ecOld }, 422, [["\"That's already your email address.\"", 'j.error.details.new_email[0] === "That\'s already your email address."']]),
+  ecStart("An address another account uses", { new_email: "{{adaEmail}}" }, 409, [["field new_email", 'j.error.field === "new_email"']]),
+  req("No code was sent for any of those", "GET", `/dev/emails/latest?to=${ecNew}`, { status: 404 }),
+
+  // the change
+  ecStart("Change to a new address", {}, 202, [["pending, with the address and expiry", `j.pending_email === pm.variables.replaceIn("${ecNew}") && !!j.expires_at`]]),
+  ecMe("The email hasn't changed yet; the change is pending", [["old email, pending new", `j.email === pm.variables.replaceIn("${ecOld}") && j.pending_email === pm.variables.replaceIn("${ecNew}")`]]),
+  ecStart("Ask again straight away", {}, 409, [["wait a minute", 'errorMessage.startsWith("We\'ve just sent a code")']]),
+  ecReadCode("Read the code sent to the new address"),
+  req("Wrong code: 4 tries left", "POST", "/users/me/email/confirm", {
+    pre: [ecWrong],
+    body: { code: "{{ecWrong}}" },
+    status: 422,
+    checks: [["4 tries left", 'j.error.details.code[0] === "That code isn\'t right. You have 4 tries left."']],
+  }),
+  req("Not 6 digits", "POST", "/users/me/email/confirm", { body: { code: "12" }, status: 422, checks: [["code", "!!j.error.details.code"]] }),
+  req("Confirm with the right code", "POST", "/users/me/email/confirm", {
+    body: { code: "{{ecCode}}" },
+    status: 200,
+    checks: [["the email is the new address, nothing pending", `j.email === pm.variables.replaceIn("${ecNew}") && j.pending_email === null`]],
+  }),
+  req("The old address is told, with the new one masked", "GET", `/dev/emails/latest?to=${ecOld}&kind=email_changed`, {
+    status: 200,
+    checks: [
+      ["\"Your VergePay email address was changed\"", 'j.subject === "Your VergePay email address was changed"'],
+      ["the new address is masked", 'j.text_body.includes("•") && !j.text_body.includes(pm.variables.replaceIn("{{ecUsername}}_new"))'],
+    ],
+  }),
+  req("Still signed in", "GET", "/users/me", { status: 200 }),
+  req("The code can't be used twice", "POST", "/users/me/email/confirm", { body: { code: "{{ecCode}}" }, status: 422, checks: [["expired or invalid", 'errorMessage.startsWith("That code has expired")']] }),
+  req("The old address no longer signs in", "POST", "/auth/signin", { body: { email: ecOld, password: TEST_PASSWORD }, status: 401 }),
+  req("The new address signs in", "POST", "/auth/signin", {
+    body: { email: ecNew, password: TEST_PASSWORD },
+    status: 200,
+    checks: [["session cookies set", 'pm.cookies.has("access_token") && pm.cookies.has("refresh_token")']],
+  }),
+
+  // expiry and cancelling (back to the original address)
+  ecStart("Change back: start", { new_email: ecOld }, 202),
+  req("Dev: let 20 minutes pass", "POST", "/dev/email-change/expire", { status: 200, checks: [["aged", "j.expired >= 1"]] }),
+  ecMe("An expired change isn't pending", [["pending_email is null", "j.pending_email === null"]]),
+  req("The expired code fails", "POST", "/users/me/email/confirm", { body: { code: "000000" }, status: 422, checks: [["expired or invalid", 'errorMessage.startsWith("That code has expired")']] }),
+  ecStart("Start again", { new_email: ecOld }, 202),
+  req("Cancel the change", "DELETE", "/users/me/email", { status: 200, checks: [["cancelled", "j.cancelled === true"]] }),
+  ecMe("Nothing pending after cancelling", [["pending_email is null", "j.pending_email === null"]]),
+  req("Cancel again: nothing to cancel", "DELETE", "/users/me/email", { status: 200, checks: [["not cancelled", "j.cancelled === false"]] }),
+
+  // with 2FA on, a recent code is needed as well
+  ...enableTwoFactor(),
+  dropTwoFactorStamp(),
+  ecStart("2FA on, no recent code: refused", { new_email: ecOld }, 403, [["TWO_FACTOR_REQUIRED", 'errorCode === "TWO_FACTOR_REQUIRED"']]),
+  reverify("Confirms a code, as the profile page asks for one."),
+  ecStart("With a recent code: the code is sent", { new_email: ecOld }, 202),
+  req("Cancel it (leave the user as it is)", "DELETE", "/users/me/email", { status: 200 }),
+];
+
+// ---------------------------------------------------------------------------
+// 20. Profile photo (a fresh user; photos are kept in Postgres)
+
+const photoPut = (name, file, contentType, status, checks = [], opts = {}) =>
+  req(name, "PUT", "/users/me/photo", { file, contentType, status, checks, ...opts });
+// photo_url is "/v1/users/me/photo/<id>"; baseUrl already ends in /v1
+const savePhotoPath = (variable) => [variable, 'j.photo_url.replace(/^\\/v1/, "")'];
+const getPhoto = (name, variable, status, checks = []) =>
+  req(name, "GET", "", { rawUrl: `{{baseUrl}}{{${variable}}}`, status, checks });
+
+const profilePhoto = [
+  ...newUser("ph2", "another customer (Tunde)"),
+  ...newUser("ph", "the customer with a photo (Amaka)"),
+  req("No photo yet", "GET", "/users/me", {
+    status: 200,
+    checks: [["photo_url is null, and the internal photo_id is never shown", 'j.photo_url === null && !("photo_id" in j)']],
+  }),
+
+  // refused, with nothing stored
+  photoPut("A GIF is refused", "postman/fixtures/photo.gif", "image/gif", 415, [["UNSUPPORTED_MEDIA_TYPE", 'errorCode === "UNSUPPORTED_MEDIA_TYPE"']]),
+  photoPut("A text file named .png is refused (the bytes are checked)", "postman/fixtures/not-a-photo.png", "image/png", 415, [["\"Upload a JPG or PNG photo.\"", 'errorMessage === "Upload a JPG or PNG photo."']]),
+  photoPut("Too small (60 × 60)", "postman/fixtures/tiny.png", "image/png", 400, [["at least 100 × 100", 'errorMessage.includes("at least 100 × 100")']]),
+  req("JSON instead of a photo is refused", "PUT", "/users/me/photo", { body: { photo: "x" }, status: 415 }),
+  req("Over 2 MB is refused", "PUT", "/users/me/photo", {
+    pre: ['pm.collectionVariables.set("phBig", "x".repeat(2 * 1024 * 1024 + 10));'],
+    raw: "{{phBig}}",
+    contentType: "image/jpeg",
+    status: 413,
+    checks: [["PAYLOAD_TOO_LARGE", 'errorCode === "PAYLOAD_TOO_LARGE"']],
+    tests: ['pm.collectionVariables.unset("phBig");'],
+  }),
+  req("Still no photo", "GET", "/users/me", { status: 200, checks: [["photo_url is null", "j.photo_url === null"]] }),
+
+  // a JPEG with camera metadata
+  photoPut("Upload a JPG (900 × 600, with camera metadata)", "postman/fixtures/photo.jpg", "image/jpeg", 200, [
+    ["photo_url is the owner's photo link", '/^\\/v1\\/users\\/me\\/photo\\/[0-9a-f-]{36}$/.test(j.photo_url)'],
+  ], { save: [savePhotoPath("phPhotoPath")] }),
+  getPhoto("The stored photo: a 512 × 512 JPEG with the metadata gone", "phPhotoPath", 200, [
+    ["image/jpeg, cached privately for good, not sniffable", 'pm.response.headers.get("Content-Type").startsWith("image/jpeg") && pm.response.headers.get("Cache-Control") === "private, max-age=31536000, immutable" && pm.response.headers.get("X-Content-Type-Options") === "nosniff"'],
+    ["no camera metadata left", '!pm.response.text().includes("SECRET-CAMERA-OWNER")'],
+    ["512 × 512", '(() => { const b = pm.response.stream; for (let i = 2; i < b.length - 8; i++) { if (b[i] === 0xff && (b[i + 1] === 0xc0 || b[i + 1] === 0xc2)) return (b[i + 5] << 8 | b[i + 6]) === 512 && (b[i + 7] << 8 | b[i + 8]) === 512; } return false; })()'],
+  ]),
+  req("The profile gives the same link", "GET", "/users/me", { status: 200, checks: [["same photo_url", 'j.photo_url.replace(/^\\/v1/, "") === v("phPhotoPath")']] }),
+
+  // only its owner can fetch it
+  signInAs("ph2", "another customer (Tunde)"),
+  getPhoto("Another customer can't fetch it", "phPhotoPath", 404),
+  req("A made-up photo id", "GET", "/users/me/photo/not-a-uuid", { status: 404 }),
+  signInAs("ph", "the customer with a photo (Amaka)"),
+
+  // replaced by a PNG
+  photoPut("Replace it with a PNG (transparent background)", "postman/fixtures/photo.png", "image/png", 200, [
+    ["a new link", 'j.photo_url.replace(/^\\/v1/, "") !== v("phPhotoPath")'],
+  ], { save: [savePhotoPath("phPhotoPath2")] }),
+  getPhoto("The new photo is a JPEG too", "phPhotoPath2", 200, [["image/jpeg", 'pm.response.headers.get("Content-Type").startsWith("image/jpeg")']]),
+  getPhoto("The old photo is gone", "phPhotoPath", 404),
+  photoPut("A refused upload leaves the photo as it was", "postman/fixtures/tiny.png", "image/png", 400),
+  req("Photo unchanged", "GET", "/users/me", { status: 200, checks: [["same photo", 'j.photo_url.replace(/^\\/v1/, "") === v("phPhotoPath2")']] }),
+
+  // removing it
+  req("Remove the photo", "DELETE", "/users/me/photo", { status: 200, checks: [["photo_url is null", "j.photo_url === null"]] }),
+  getPhoto("The removed photo is gone", "phPhotoPath2", 404),
+  req("Remove again: still fine", "DELETE", "/users/me/photo", { status: 200, checks: [["photo_url is null", "j.photo_url === null"]] }),
+];
+
+// ---------------------------------------------------------------------------
 // 17. Loan repayment rules
 
 const lrApply = (accountVar, extra = {}) => ({
@@ -3355,7 +3612,10 @@ const main = collection(
     folder("15. Payroll", "Paying other VergePay customers: adding payees by account number (KYC, validation, own wallet, duplicates), pay runs that are all or nothing (refusals before any money moves, insufficient funds, mixed currencies, inactive payees), idempotent retries including a lost reply, due dates by frequency, a concurrent race, and the payee's side (alert, balance, privacy, no reversal). Four fresh customers.", payroll),
     folder("16. Withdrawals", "Withdrawing to a Nigerian bank account through Flutterwave Transfers (the stand-in): banks, name enquiry and saved accounts, the fee split (half each, the customer's rounded down), refusals before any money moves, the wallet debited at once, idempotent retries including a lost reply, a webhook that isn't trusted, success, a bank failure refunded with its reason, Flutterwave refusing or unreachable, the daily limit (and a concurrent race on it), removing a bank account, and other users. A fresh customer.", withdrawals),
     folder("17. Loan repayment rules", "Auto-debit on the due date (collected; or not, with one alert a day), the late fee after 3 days' grace (charged once, ₦500 minimum), paying any amount (fees first, then the oldest installment, then the next), the payoff quote and the most you can pay, default at 90 days overdue (no new loans) and back to active once caught up, paying off, and paying ahead on a loan with interest (the last installment's principal paid down and part of its interest waived). A fresh borrower; the loan job is run through /dev/loans/run-jobs.", loanRules),
-    folder("18. Wrap-up", "The 2FA brute-force limit, resetting the test users, and logout.", wrapUp),
+    folder("18. Forgot password", "Resetting a forgotten password with an emailed 6-digit code: the same answer whether or not the account exists, one email a minute at most, 5 tries per code, the password rules, expiry after 15 minutes, a code that works once, and every session ended by the reset. A fresh customer; the code is read from the email log through /dev/emails/latest.", forgotPassword),
+    folder("19. Changing email", "Changing the email address: the password (and a recent 2FA code when 2FA is on) checked before anything is sent, a code to the new address, the change pending until it's confirmed, 5 tries, the old address told with the new one masked, still signed in, signing in with the new address only, expiry and cancelling. A fresh customer.", emailChange),
+    folder("20. Profile photo", "Uploading a profile photo, kept in Postgres: JPG or PNG only, checked by its bytes, 2 MB at most, at least 100 × 100; stored as a 512 × 512 JPEG with the metadata stripped; fetched only by its owner, cached for good under a URL that changes with each photo; replacing and removing. Two fresh customers.", profilePhoto),
+    folder("21. Wrap-up", "The 2FA brute-force limit, resetting the test users, and logout.", wrapUp),
   ],
 );
 

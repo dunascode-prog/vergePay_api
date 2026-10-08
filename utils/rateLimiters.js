@@ -117,3 +117,50 @@ export const lookupLimiter = rateLimit({
     );
   },
 });
+
+// Forgot password: asking for codes (each one sends an email) and trying
+// them, per IP. A code also stops after 5 wrong tries on its own.
+export const passwordForgotLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req, res, next) => {
+    next(new TooManyRequestsError({ message: "Too many password reset requests. Please try again in a few minutes." }));
+  },
+});
+
+// Changing the email: each request checks the password and sends an email,
+// so it is limited per user (the confirm step has its own 5 tries a code).
+export const emailChangeLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  keyGenerator: (req) => req.user.sub,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req, res, next) => {
+    next(new TooManyRequestsError({ message: "Too many email change attempts. Please try again in a few minutes." }));
+  },
+});
+
+// Profile photo changes: each one stores a file, so a few per user.
+export const photoLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  keyGenerator: (req) => req.user.sub,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req, res, next) => {
+    next(new TooManyRequestsError({ message: "Too many photo changes. Please try again in a few minutes." }));
+  },
+});
+
+export const passwordResetLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req, res, next) => {
+    next(new TooManyRequestsError({ message: "Too many attempts. Please try again in a few minutes." }));
+  },
+});
