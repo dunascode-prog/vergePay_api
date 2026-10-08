@@ -15,6 +15,7 @@ import {
 } from "../utils/errorStr.js";
 import { validationDetails } from "../utils/validation.js";
 import { PROFILE_COLUMNS } from "./userController.js";
+import { withPhotoUrl } from "../services/profilePhotos.js";
 
 // Changing the email address (db/migrations.db/email_changes.sql):
 //
@@ -182,7 +183,7 @@ export async function confirmEmailChange(req, res) {
 
   // the failed try is saved even though the request fails
   if (outcome.error) throw outcome.error;
-  return res.status(200).json(outcome.profile);
+  return res.status(200).json(await withPhotoUrl(outcome.profile));
 }
 
 // DELETE /v1/users/me/email

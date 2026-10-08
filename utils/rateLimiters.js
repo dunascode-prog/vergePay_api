@@ -143,6 +143,18 @@ export const emailChangeLimiter = rateLimit({
   },
 });
 
+// Profile photo changes: each one stores a file, so a few per user.
+export const photoLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  keyGenerator: (req) => req.user.sub,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req, res, next) => {
+    next(new TooManyRequestsError({ message: "Too many photo changes. Please try again in a few minutes." }));
+  },
+});
+
 export const passwordResetLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 30,

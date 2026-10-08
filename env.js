@@ -152,6 +152,10 @@ const env = {
     // how often the worker re-checks withdrawals Flutterwave hasn't confirmed
     syncIntervalMs: parseInt(process.env.WITHDRAWAL_SYNC_INTERVAL_MS, 10) || 5 * 60 * 1000,
   },
+  // Profile photos (services/profilePhotos.js): the largest upload accepted.
+  photos: {
+    maxBytes: 2 * 1024 * 1024,
+  },
   // Flutterwave (services/flutterwave.js). Card and bank-transfer funding
   // are off until FLW_SECRET_KEY is set.
   flutterwave: {
