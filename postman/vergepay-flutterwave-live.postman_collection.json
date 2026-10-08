@@ -26,10 +26,6 @@
       "value": "ada.login@vergepay.dev"
     },
     {
-      "key": "s3StandInUrl",
-      "value": "http://localhost:9997"
-    },
-    {
       "key": "adaPassword",
       "value": "Signin$Ada7741"
     },

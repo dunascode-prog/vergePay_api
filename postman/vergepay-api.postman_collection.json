@@ -26,10 +26,6 @@
       "value": "ada.login@vergepay.dev"
     },
     {
-      "key": "s3StandInUrl",
-      "value": "http://localhost:9997"
-    },
-    {
       "key": "adaPassword",
       "value": "Signin$Ada7741"
     },
@@ -48435,8 +48431,118 @@
     },
     {
       "name": "20. Profile photo",
-      "description": "Uploading a profile photo to a private S3 bucket (the stand-in): JPG or PNG only, checked by its bytes, 2 MB at most, at least 100 × 100; stored as a 512 × 512 JPEG with the metadata stripped; a signed link that stays the same all hour; replacing deletes the old file; removing it. A fresh customer.",
+      "description": "Uploading a profile photo, kept in Postgres: JPG or PNG only, checked by its bytes, 2 MB at most, at least 100 × 100; stored as a 512 × 512 JPEG with the metadata stripped; fetched only by its owner, cached for good under a URL that changes with each photo; replacing and removing. Two fresh customers.",
       "item": [
+        {
+          "name": "New user: another customer (Tunde)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"ph2Username\", \"ph2_\" + Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/signup",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "signup"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{ph2Username}}\",\n  \"email\": \"{{ph2Username}}@vergepay.dev\",\n  \"password\": \"VergePay#Test2026\",\n  \"confirmPassword\": \"VergePay#Test2026\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "A fresh user for this run, so the another customer (Tunde) steps start with no wallets.\n\n**Expect:** 201"
+          }
+        },
+        {
+          "name": "Sign in as another customer (Tunde)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"session cookies set\", () => pm.expect(pm.cookies.has(\"access_token\") && pm.cookies.has(\"refresh_token\"), \"session cookies set\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/signin",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "signin"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{ph2Username}}@vergepay.dev\",\n  \"password\": \"VergePay#Test2026\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Switches the session to this run's another customer (Tunde) user.\n\n**Expect:** 200\n\n**Checks:**\n- session cookies set"
+          }
+        },
         {
           "name": "New user: the customer with a photo (Amaka)",
           "event": [
@@ -48563,8 +48669,7 @@
                   "const errorMessage = (j.error && j.error.message) || \"\";",
                   "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
                   "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
-                  "pm.test(\"photo_url is null, and the S3 key is never shown\", () => pm.expect(j.photo_url === null && !(\"photo_key\" in j), \"photo_url is null, and the S3 key is never shown\").to.be.true);",
-                  "try { pm.collectionVariables.set(\"phUserId\", j.user_id); } catch (e) {}"
+                  "pm.test(\"photo_url is null, and the internal photo_id is never shown\", () => pm.expect(j.photo_url === null && !(\"photo_id\" in j), \"photo_url is null, and the internal photo_id is never shown\").to.be.true);"
                 ]
               }
             }
@@ -48582,7 +48687,7 @@
                 "me"
               ]
             },
-            "description": "**Expect:** 200\n\n**Checks:**\n- photo_url is null, and the S3 key is never shown"
+            "description": "**Expect:** 200\n\n**Checks:**\n- photo_url is null, and the internal photo_id is never shown"
           }
         },
         {
@@ -48846,7 +48951,7 @@
           }
         },
         {
-          "name": "Nothing was stored",
+          "name": "Still no photo",
           "event": [
             {
               "listen": "test",
@@ -48861,7 +48966,7 @@
                   "const errorMessage = (j.error && j.error.message) || \"\";",
                   "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
                   "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
-                  "pm.test(\"no objects\", () => pm.expect(j.length === 0, \"no objects\").to.be.true);"
+                  "pm.test(\"photo_url is null\", () => pm.expect(j.photo_url === null, \"photo_url is null\").to.be.true);"
                 ]
               }
             }
@@ -48870,21 +48975,16 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{s3StandInUrl}}/_objects?prefix=avatars/{{phUserId}}/",
+              "raw": "{{baseUrl}}/users/me",
               "host": [
-                "{{s3StandInUrl}}"
+                "{{baseUrl}}"
               ],
               "path": [
-                "_objects"
-              ],
-              "query": [
-                {
-                  "key": "prefix",
-                  "value": "avatars/{{phUserId}}/"
-                }
+                "users",
+                "me"
               ]
             },
-            "description": "**Expect:** 200\n\n**Checks:**\n- no objects"
+            "description": "**Expect:** 200\n\n**Checks:**\n- photo_url is null"
           }
         },
         {
@@ -48903,8 +49003,8 @@
                   "const errorMessage = (j.error && j.error.message) || \"\";",
                   "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
                   "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
-                  "pm.test(\"photo_url is a signed link to the private bucket\", () => pm.expect(j.photo_url.includes(\"/vergepay-photos-test/avatars/\" + v(\"phUserId\") + \"/\") && j.photo_url.includes(\"X-Amz-Signature=\"), \"photo_url is a signed link to the private bucket\").to.be.true);",
-                  "try { pm.collectionVariables.set(\"phPhotoUrl\", j.photo_url); } catch (e) {}"
+                  "pm.test(\"photo_url is the owner's photo link\", () => pm.expect(/^\\/v1\\/users\\/me\\/photo\\/[0-9a-f-]{36}$/.test(j.photo_url), \"photo_url is the owner's photo link\").to.be.true);",
+                  "try { pm.collectionVariables.set(\"phPhotoPath\", j.photo_url.replace(/^\\/v1/, \"\")); } catch (e) {}"
                 ]
               }
             }
@@ -48934,7 +49034,7 @@
                 "src": "postman/fixtures/photo.jpg"
               }
             },
-            "description": "**Expect:** 200\n\n**Checks:**\n- photo_url is a signed link to the private bucket"
+            "description": "**Expect:** 200\n\n**Checks:**\n- photo_url is the owner's photo link"
           }
         },
         {
@@ -48953,7 +49053,7 @@
                   "const errorMessage = (j.error && j.error.message) || \"\";",
                   "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
                   "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
-                  "pm.test(\"image/jpeg, cached privately\", () => pm.expect(pm.response.headers.get(\"Content-Type\") === \"image/jpeg\" && pm.response.headers.get(\"Cache-Control\").startsWith(\"private\"), \"image/jpeg, cached privately\").to.be.true);",
+                  "pm.test(\"image/jpeg, cached privately for good, not sniffable\", () => pm.expect(pm.response.headers.get(\"Content-Type\").startsWith(\"image/jpeg\") && pm.response.headers.get(\"Cache-Control\") === \"private, max-age=31536000, immutable\" && pm.response.headers.get(\"X-Content-Type-Options\") === \"nosniff\", \"image/jpeg, cached privately for good, not sniffable\").to.be.true);",
                   "pm.test(\"no camera metadata left\", () => pm.expect(!pm.response.text().includes(\"SECRET-CAMERA-OWNER\"), \"no camera metadata left\").to.be.true);",
                   "pm.test(\"512 × 512\", () => pm.expect((() => { const b = pm.response.stream; for (let i = 2; i < b.length - 8; i++) { if (b[i] === 0xff && (b[i + 1] === 0xc0 || b[i + 1] === 0xc2)) return (b[i + 5] << 8 | b[i + 6]) === 512 && (b[i + 7] << 8 | b[i + 8]) === 512; } return false; })(), \"512 × 512\").to.be.true);"
                 ]
@@ -48963,12 +49063,12 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": "{{phPhotoUrl}}",
-            "description": "**Expect:** 200\n\n**Checks:**\n- image/jpeg, cached privately\n- no camera metadata left\n- 512 × 512"
+            "url": "{{baseUrl}}{{phPhotoPath}}",
+            "description": "**Expect:** 200\n\n**Checks:**\n- image/jpeg, cached privately for good, not sniffable\n- no camera metadata left\n- 512 × 512"
           }
         },
         {
-          "name": "The profile gives the same link all hour (so it caches)",
+          "name": "The profile gives the same link",
           "event": [
             {
               "listen": "test",
@@ -48983,7 +49083,7 @@
                   "const errorMessage = (j.error && j.error.message) || \"\";",
                   "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
                   "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
-                  "pm.test(\"same photo_url\", () => pm.expect(j.photo_url === v(\"phPhotoUrl\"), \"same photo_url\").to.be.true);"
+                  "pm.test(\"same photo_url\", () => pm.expect(j.photo_url.replace(/^\\/v1/, \"\") === v(\"phPhotoPath\"), \"same photo_url\").to.be.true);"
                 ]
               }
             }
@@ -49005,7 +49105,7 @@
           }
         },
         {
-          "name": "One photo stored",
+          "name": "Sign in as another customer (Tunde)",
           "event": [
             {
               "listen": "test",
@@ -49020,7 +49120,84 @@
                   "const errorMessage = (j.error && j.error.message) || \"\";",
                   "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
                   "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
-                  "pm.test(\"one object\", () => pm.expect(j.length === 1, \"one object\").to.be.true);"
+                  "pm.test(\"session cookies set\", () => pm.expect(pm.cookies.has(\"access_token\") && pm.cookies.has(\"refresh_token\"), \"session cookies set\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/signin",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "signin"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{ph2Username}}@vergepay.dev\",\n  \"password\": \"VergePay#Test2026\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Switches the session to this run's another customer (Tunde) user.\n\n**Expect:** 200\n\n**Checks:**\n- session cookies set"
+          }
+        },
+        {
+          "name": "Another customer can't fetch it",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}{{phPhotoPath}}",
+            "description": "**Expect:** 404"
+          }
+        },
+        {
+          "name": "A made-up photo id",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));"
                 ]
               }
             }
@@ -49029,21 +49206,69 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{s3StandInUrl}}/_objects?prefix=avatars/{{phUserId}}/",
+              "raw": "{{baseUrl}}/users/me/photo/not-a-uuid",
               "host": [
-                "{{s3StandInUrl}}"
+                "{{baseUrl}}"
               ],
               "path": [
-                "_objects"
-              ],
-              "query": [
-                {
-                  "key": "prefix",
-                  "value": "avatars/{{phUserId}}/"
-                }
+                "users",
+                "me",
+                "photo",
+                "not-a-uuid"
               ]
             },
-            "description": "**Expect:** 200\n\n**Checks:**\n- one object"
+            "description": "**Expect:** 404"
+          }
+        },
+        {
+          "name": "Sign in as the customer with a photo (Amaka)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"session cookies set\", () => pm.expect(pm.cookies.has(\"access_token\") && pm.cookies.has(\"refresh_token\"), \"session cookies set\").to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/signin",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "signin"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{phUsername}}@vergepay.dev\",\n  \"password\": \"VergePay#Test2026\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Switches the session to this run's the customer with a photo (Amaka) user.\n\n**Expect:** 200\n\n**Checks:**\n- session cookies set"
           }
         },
         {
@@ -49062,8 +49287,8 @@
                   "const errorMessage = (j.error && j.error.message) || \"\";",
                   "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
                   "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
-                  "pm.test(\"a new link\", () => pm.expect(j.photo_url !== v(\"phPhotoUrl\"), \"a new link\").to.be.true);",
-                  "try { pm.collectionVariables.set(\"phPhotoUrl2\", j.photo_url); } catch (e) {}"
+                  "pm.test(\"a new link\", () => pm.expect(j.photo_url.replace(/^\\/v1/, \"\") !== v(\"phPhotoPath\"), \"a new link\").to.be.true);",
+                  "try { pm.collectionVariables.set(\"phPhotoPath2\", j.photo_url.replace(/^\\/v1/, \"\")); } catch (e) {}"
                 ]
               }
             }
@@ -49112,7 +49337,7 @@
                   "const errorMessage = (j.error && j.error.message) || \"\";",
                   "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
                   "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
-                  "pm.test(\"image/jpeg\", () => pm.expect(pm.response.headers.get(\"Content-Type\") === \"image/jpeg\", \"image/jpeg\").to.be.true);"
+                  "pm.test(\"image/jpeg\", () => pm.expect(pm.response.headers.get(\"Content-Type\").startsWith(\"image/jpeg\"), \"image/jpeg\").to.be.true);"
                 ]
               }
             }
@@ -49120,12 +49345,12 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": "{{phPhotoUrl2}}",
+            "url": "{{baseUrl}}{{phPhotoPath2}}",
             "description": "**Expect:** 200\n\n**Checks:**\n- image/jpeg"
           }
         },
         {
-          "name": "The old photo is deleted from the bucket",
+          "name": "The old photo is gone",
           "event": [
             {
               "listen": "test",
@@ -49147,50 +49372,8 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": "{{phPhotoUrl}}",
+            "url": "{{baseUrl}}{{phPhotoPath}}",
             "description": "**Expect:** 404"
-          }
-        },
-        {
-          "name": "Still one photo stored",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
-                  "const v = (k) => pm.collectionVariables.get(k);",
-                  "const n = (k) => Number(pm.collectionVariables.get(k));",
-                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
-                  "const errorCode = j.error && j.error.code;",
-                  "const errorMessage = (j.error && j.error.message) || \"\";",
-                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
-                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
-                  "pm.test(\"one object\", () => pm.expect(j.length === 1, \"one object\").to.be.true);"
-                ]
-              }
-            }
-          ],
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{s3StandInUrl}}/_objects?prefix=avatars/{{phUserId}}/",
-              "host": [
-                "{{s3StandInUrl}}"
-              ],
-              "path": [
-                "_objects"
-              ],
-              "query": [
-                {
-                  "key": "prefix",
-                  "value": "avatars/{{phUserId}}/"
-                }
-              ]
-            },
-            "description": "**Expect:** 200\n\n**Checks:**\n- one object"
           }
         },
         {
@@ -49257,7 +49440,7 @@
                   "const errorMessage = (j.error && j.error.message) || \"\";",
                   "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
                   "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
-                  "pm.test(\"same photo\", () => pm.expect(j.photo_url === v(\"phPhotoUrl2\"), \"same photo\").to.be.true);"
+                  "pm.test(\"same photo\", () => pm.expect(j.photo_url.replace(/^\\/v1/, \"\") === v(\"phPhotoPath2\"), \"same photo\").to.be.true);"
                 ]
               }
             }
@@ -49317,7 +49500,7 @@
           }
         },
         {
-          "name": "The bucket is empty again",
+          "name": "The removed photo is gone",
           "event": [
             {
               "listen": "test",
@@ -49331,8 +49514,7 @@
                   "const errorCode = j.error && j.error.code;",
                   "const errorMessage = (j.error && j.error.message) || \"\";",
                   "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
-                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
-                  "pm.test(\"no objects\", () => pm.expect(j.length === 0, \"no objects\").to.be.true);"
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));"
                 ]
               }
             }
@@ -49340,22 +49522,8 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": {
-              "raw": "{{s3StandInUrl}}/_objects?prefix=avatars/{{phUserId}}/",
-              "host": [
-                "{{s3StandInUrl}}"
-              ],
-              "path": [
-                "_objects"
-              ],
-              "query": [
-                {
-                  "key": "prefix",
-                  "value": "avatars/{{phUserId}}/"
-                }
-              ]
-            },
-            "description": "**Expect:** 200\n\n**Checks:**\n- no objects"
+            "url": "{{baseUrl}}{{phPhotoPath2}}",
+            "description": "**Expect:** 404"
           }
         },
         {

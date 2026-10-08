@@ -2,8 +2,7 @@
 //
 //   npm run test:postman
 //
-// Needs, in other terminals: npm run flw:stand-in, npm run alpaca:stand-in,
-// npm run s3:stand-in and npm run start:with-stand-in.
+// Needs, in other terminals: npm run flw:stand-in and npm run start:with-stand-in.
 // Reads INTERNAL_API_KEY from .env and passes it to the collection, so the
 // key never has to be pasted into the collection file.
 import { spawnSync } from "child_process";

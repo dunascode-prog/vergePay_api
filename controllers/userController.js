@@ -27,8 +27,8 @@ export const PROFILE_COLUMNS = `
     timezone,
     kyc_status,
     two_factor_enabled,
-    -- the S3 key; responses swap it for a signed photo_url (withPhotoUrl)
-    photo_key,
+    -- the current photo's id; responses swap it for photo_url (withPhotoUrl)
+    (SELECT p.photo_id FROM profile_photos p WHERE p.user_id = users.user_id) AS photo_id,
     -- an email change waiting for its code (controllers/emailChangeController.js)
     (SELECT e.new_email FROM email_change_codes e
      WHERE e.user_id = users.user_id AND e.used_at IS NULL

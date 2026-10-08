@@ -1,7 +1,7 @@
 import express from "express";
 import { getMe, updateMe } from "../controllers/userController.js";
 import { cancelEmailChange, confirmEmailChange, startEmailChange } from "../controllers/emailChangeController.js";
-import { removePhoto, uploadPhoto } from "../controllers/profilePhotoController.js";
+import { getPhoto, removePhoto, uploadPhoto } from "../controllers/profilePhotoController.js";
 import env from "../env.js";
 import { emailChangeLimiter, photoLimiter } from "../utils/rateLimiters.js";
 import { verifyAccessToken } from "../utils/jwt.js";
@@ -29,5 +29,7 @@ userRouter.put(
   uploadPhoto,
 );
 userRouter.delete("/me/photo", verifyAccessToken, photoLimiter, removePhoto);
+// the photo itself, to its owner only (photo_url in the profile)
+userRouter.get("/me/photo/:photoId", verifyAccessToken, getPhoto);
 
 export default userRouter;
