@@ -49568,7 +49568,7 @@
     },
     {
       "name": "21. Ask VergePay and recommendations",
-      "description": "The assistant answers from the customer's own data (who owes them, what's overdue, a client by name, spending, balance), declines off-topic questions, and validates input; recommendations rank an overdue invoice first with a reminder action, and a dismissed one stays hidden. The small model runs in the API; the optional open model is off here. A fresh customer.",
+      "description": "The assistant answers from the customer's own data (who owes them, what's overdue, a client by name, spending, balance), declines off-topic questions, and validates input; recommendations rank an overdue invoice first (offering a reminder only once the API's one-an-hour limit allows it), and a dismissed one stays hidden. The small model runs in the API; the optional open model is off here. A fresh customer.",
       "item": [
         {
           "name": "New user: the customer asking questions (Bisi)",
@@ -50286,7 +50286,7 @@
                   "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
                   "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
                   "pm.test(\"Kola Ventures, ₦50,000.00, overdue\", () => pm.expect(j.intent === \"top_debtor\" && j.answer.startsWith(\"Kola Ventures owes you the most: ₦50,000.00 across 1 invoice, ₦50,000.00 of it overdue\"), \"Kola Ventures, ₦50,000.00, overdue\").to.be.true);",
-                  "pm.test(\"a reminder action for that invoice\", () => pm.expect(j.actions[0].kind === \"remind\" && j.actions[0].invoice_id === v(\"asInvoiceId\"), \"a reminder action for that invoice\").to.be.true);"
+                  "pm.test(\"emailed under an hour ago, so a link to the invoice rather than a reminder (the API allows one an hour)\", () => pm.expect(j.actions[0].href === \"/dashboard/invoices/\" + v(\"asInvoiceId\") && !j.actions[0].kind, \"emailed under an hour ago, so a link to the invoice rather than a reminder (the API allows one an hour)\").to.be.true);"
                 ]
               }
             }
@@ -50318,7 +50318,7 @@
                 }
               }
             },
-            "description": "**Expect:** 200\n\n**Checks:**\n- Kola Ventures, ₦50,000.00, overdue\n- a reminder action for that invoice"
+            "description": "**Expect:** 200\n\n**Checks:**\n- Kola Ventures, ₦50,000.00, overdue\n- emailed under an hour ago, so a link to the invoice rather than a reminder (the API allows one an hour)"
           }
         },
         {
@@ -50694,7 +50694,8 @@
                   "const errorMessage = (j.error && j.error.message) || \"\";",
                   "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
                   "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
-                  "pm.test(\"the overdue invoice comes first, with a reminder\", () => pm.expect(j.data[0].key === \"overdue:\" + v(\"asInvoiceId\") && j.data[0].action.kind === \"remind\" && j.data[0].title === \"Chase Kola Ventures: ₦50,000.00 is 9 days late\", \"the overdue invoice comes first, with a reminder\").to.be.true);"
+                  "pm.test(\"the overdue invoice comes first\", () => pm.expect(j.data[0].key === \"overdue:\" + v(\"asInvoiceId\") && j.data[0].title === \"Chase Kola Ventures: ₦50,000.00 is 9 days late\", \"the overdue invoice comes first\").to.be.true);",
+                  "pm.test(\"just emailed: says when a reminder can go, links to the invoice meanwhile\", () => pm.expect(/You can send a reminder in \\d+ minutes?\\./.test(j.data[0].body) && j.data[0].action.label === \"Open invoice\", \"just emailed: says when a reminder can go, links to the invoice meanwhile\").to.be.true);"
                 ]
               }
             }
@@ -50717,7 +50718,7 @@
                 }
               ]
             },
-            "description": "**Expect:** 200\n\n**Checks:**\n- the overdue invoice comes first, with a reminder"
+            "description": "**Expect:** 200\n\n**Checks:**\n- the overdue invoice comes first\n- just emailed: says when a reminder can go, links to the invoice meanwhile"
           }
         },
         {

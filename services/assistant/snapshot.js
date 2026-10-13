@@ -49,7 +49,9 @@ export async function loadSnapshot(db, userId) {
               c.client_id,
               COALESCE(c.name, NULLIF(concat_ws(' ', bu.first_name, bu.last_name), ''), bu.username) AS client_name,
               COALESCE(c.client_id::text, 'user:' || bu.user_id::text, i.invoice_id::text) AS payer_key,
-              (SELECT max(e.created_at) FROM email_log e WHERE e.invoice_id = i.invoice_id AND e.kind = 'reminder') AS last_reminder_at
+              (SELECT max(e.created_at) FROM email_log e WHERE e.invoice_id = i.invoice_id AND e.kind = 'reminder') AS last_reminder_at,
+              -- a reminder can go an hour after the last email (invoice or reminder), as the API allows
+              (SELECT max(e.created_at) FROM email_log e WHERE e.invoice_id = i.invoice_id AND e.kind IN ('invoice', 'reminder')) AS last_emailed_at
        FROM invoices i
        LEFT JOIN clients c ON c.client_id = i.client_id
        LEFT JOIN account ba ON ba.account_id = i.account_id AND i.client_id IS NULL
