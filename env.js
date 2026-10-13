@@ -28,6 +28,7 @@ const env = {
   port: parseInt(process.env.PORT, 10) || 4000,
   nodeEnv: process.env.NODE_ENV || "development",
   databaseUrl: process.env.DATABASE_URI,
+  databasePoolMax: parseInt(process.env.DB_POOL_MAX, 10) || 10,
   jwtdet: {
     accessSecret: process.env.JWT_ACCESS_SECRET,
     refreshSecret: process.env.JWT_REFRESH_SECRET,

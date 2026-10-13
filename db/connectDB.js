@@ -17,6 +17,9 @@ export default async () => {
   try {
     pool = await new Pool({
       connectionString: env.databaseUrl,
+      // connections kept open to Postgres (pg's default is 10); keep within
+      // the database's own limit (Supabase's pooler allows about 15 on free)
+      max: env.databasePoolMax,
       ssl: {
         rejectUnauthorized: false,
       },
