@@ -45,6 +45,17 @@ const env = {
       parseInt(process.env.MAX_FAILED_LOGIN_ATTEMPTS_SIGNUP, 10) || 5,
     lockoutDurationMinutesSignUp:
       parseInt(process.env.LOCKOUT_DURATION_MINUTES_SIGNUP, 10) || 15,
+    // Failed sign-ins from one IP across all accounts (credential stuffing),
+    // on top of the per-account limit above.
+    maxFailedSignInsPerIp:
+      parseInt(process.env.MAX_FAILED_SIGNINS_PER_IP, 10) || 200,
+    // How many proxies sit in front of the API, so req.ip is the customer's
+    // address, not the proxy's. On Render (RENDER=true) that's 1; set
+    // TRUST_PROXY to override (a number of hops, or "false").
+    trustProxy:
+      process.env.TRUST_PROXY !== undefined
+        ? process.env.TRUST_PROXY === "false" ? false : Number(process.env.TRUST_PROXY) || 1
+        : process.env.RENDER ? 1 : false,
   },
   // Optional open chat model for "Ask VergePay" (services/assistant/llm.js),
   // served by Ollama on a server you run. Off unless OLLAMA_URL is set.

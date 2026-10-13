@@ -6,9 +6,13 @@ import { addRequestId } from "./utils/addRequestId.js";
 import { handleErrors } from "./controllers/handleErrors.js";
 import cors from "cors";
 import morgan from "morgan";
+import env from "./env.js";
 import cookieParser from "cookie-parser";
 
 const app = express();
+// Behind Render's proxy every request arrives from the proxy's address:
+// without this, all customers share one IP and its rate limits.
+if (env.security.trustProxy) app.set("trust proxy", env.security.trustProxy);
 app.use(cookieParser());
 
 app.use(morgan("dev"));

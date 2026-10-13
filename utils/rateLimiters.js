@@ -1,4 +1,4 @@
-import rateLimit from "express-rate-limit";
+import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import { TooManyRequestsError } from "./errorStr.js";
 import env from "../env.js";
 
@@ -21,9 +21,17 @@ export const signupLimiter = rateLimit({
     );
   },
 });
+// Failed sign-ins, per account (and IP). Keyed by account so that many
+// customers signing in at once from one address (an office, a mobile
+// network) can't lock each other out: the counter rises as each attempt
+// arrives and falls when it succeeds, so one shared key overflows under a
+// burst of correct sign-ins.
+const signinAccount = (req) => `${ipKeyGenerator(req.ip)}:${String(req.body?.email ?? "").trim().toLowerCase()}`;
+
 export const signinLimiter = rateLimit({
   windowMs: lockoutDurationMinutesSignIn * 60 * 1000,
   max: maxFailedLoginAttemptsSignIn,
+  keyGenerator: signinAccount,
   // only failed logins count toward the lockout
   skipSuccessfulRequests: true,
   standardHeaders: true,
@@ -34,6 +42,19 @@ export const signinLimiter = rateLimit({
         message: "Too many sign-in attempts. Please try again later.",
       }),
     );
+  },
+});
+
+// Failed sign-ins from one IP across every account: stops one machine
+// trying many accounts, set high enough not to catch a busy shared address.
+export const signinIpLimiter = rateLimit({
+  windowMs: lockoutDurationMinutesSignIn * 60 * 1000,
+  max: env.security.maxFailedSignInsPerIp,
+  skipSuccessfulRequests: true,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req, res, next) => {
+    next(new TooManyRequestsError({ message: "Too many sign-in attempts from this network. Please try again later." }));
   },
 });
 

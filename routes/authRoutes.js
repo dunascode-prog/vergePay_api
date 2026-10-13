@@ -18,6 +18,7 @@ import {
   verifyAccessTokenAllowPending,
 } from "../utils/jwt.js";
 import {
+  signinIpLimiter,
   signinLimiter,
   signupLimiter,
   twoFactorLimiter,
@@ -26,7 +27,7 @@ import {
 const authRouter = express.Router();
 
 authRouter.post("/signup", signupLimiter, signUp);
-authRouter.post("/signin", signinLimiter, signIn);
+authRouter.post("/signin", signinIpLimiter, signinLimiter, signIn);
 authRouter.post("/refresh", refreshToken);
 authRouter.post("/logout", logout);
 

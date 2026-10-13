@@ -177,9 +177,10 @@ const standIn = (name, path, body, opts = {}) =>
 // script with pm.sendRequest, which shares the session cookie jar. The probe
 // is the request that carries that script: by default a harmless GET that
 // needs a session; override it where there may be no session yet.
-function concurrently(name, { count, method, path, bodyExpr, headersExpr = "{}", expectExpr, label, description, probe = { method: "GET", path: "/users/me" } }) {
+function concurrently(name, { count, method, path, bodyExpr, headersExpr = "{}", expectExpr, label, description, probe = { method: "GET", path: "/users/me" }, pre = [] }) {
   return req(name, probe.method, probe.path, {
     body: probe.body,
+    pre,
     status: 200,
     description: `${description}\n\nThe request itself is a harmless ${probe.method} ${probe.path}; its test script fires ${count} ${method} ${path} requests at the same moment and counts the outcomes.`,
     extraCheckLabels: [label],
@@ -362,6 +363,50 @@ const auth = [
     // signing up just cleared the session, so the probe is a sign-in itself
     probe: { method: "POST", path: "/auth/signin", body: { email: "{{toluEmail}}", password: "{{toluPassword}}" } },
     description: "Regression check: session tokens used to be identical when issued for the same user in the same second, so the second sign-in failed with a 500. Each token now carries a random id.",
+  }),
+  concurrently("25 new customers sign up at once (for the next check)", {
+    count: 25,
+    method: "POST",
+    path: "/auth/signup",
+    pre: ['pm.collectionVariables.set("burstRun", String(Date.now()));'],
+    bodyExpr: '{ username: "burst" + i + "_" + pm.collectionVariables.get("burstRun"), email: "burst" + i + "_" + pm.collectionVariables.get("burstRun") + "@vergepay.dev", password: "VergePay#Test2026", confirmPassword: "VergePay#Test2026" }',
+    expectExpr: "codes.every((c) => c === 201)",
+    label: "all 25 created",
+    probe: { method: "POST", path: "/auth/signin", body: { email: "{{toluEmail}}", password: "{{toluPassword}}" } },
+    description: "Sets up 25 accounts for the burst of sign-ins that follows.",
+  }),
+  concurrently("Concurrent: 25 customers sign in at the same moment", {
+    count: 25,
+    method: "POST",
+    path: "/auth/signin",
+    bodyExpr: '{ email: "burst" + i + "_" + pm.collectionVariables.get("burstRun") + "@vergepay.dev", password: "VergePay#Test2026" }',
+    expectExpr: "codes.every((c) => c === 200)",
+    label: "all 25 succeed (customers signing in together from one network don't lock each other out)",
+    probe: { method: "POST", path: "/auth/signin", body: { email: "{{toluEmail}}", password: "{{toluPassword}}" } },
+    description: "Regression check, found by the load test: the failed-sign-in limit counts each attempt as it arrives and takes successful ones off only when they finish. With one key for a whole IP address (and on Render every customer looked like the proxy's IP), 10+ customers signing in at the same moment were refused, and 10 wrong passwords from anyone locked everyone out. The limit is now kept per account, with a high per-IP ceiling, and the API trusts Render's proxy.",
+  }),
+  req("Wrong password until locked out (an account that doesn't exist)", "POST", "/auth/signin", {
+    body: { email: "nobody_{{$timestamp}}@vergepay.dev", password: "Wrong#Password2026" },
+    pre: ['pm.collectionVariables.set("lockEmail", "lock_" + Date.now() + "@vergepay.dev");'],
+    status: 401,
+    description: "Sends wrong passwords for one address until the per-account limit answers 429 (MAX_FAILED_LOGIN_ATTEMPTS_SIGNIN, 5 by default).",
+    extraCheckLabels: ["a 429 arrives within 12 wrong passwords for one account"],
+    tests: [
+      "const codes = [];",
+      "const next = () => pm.sendRequest({",
+      '  url: pm.variables.replaceIn("{{baseUrl}}/auth/signin"), method: "POST",',
+      '  header: { "Content-Type": "application/json" }, body: { mode: "raw", raw: JSON.stringify({ email: pm.collectionVariables.get("lockEmail"), password: "Wrong#Password2026" }) },',
+      "}, (err, res) => {",
+      "  codes.push(res.code);",
+      "  if (res.code !== 429 && codes.length < 12) return next();",
+      '  pm.test("a 429 arrives within 12 wrong passwords for one account (" + codes.join(", ") + ")", () => pm.expect(codes).to.include(429));',
+      "});",
+      "next();",
+    ],
+  }),
+  req("Another account still signs in (the lockout is per account)", "POST", "/auth/signin", {
+    body: { email: "{{adaEmail}}", password: "{{adaPassword}}" },
+    status: 200,
   }),
   req("Sign in (Tolu)", "POST", "/auth/signin", {
     body: { email: "{{toluEmail}}", password: "{{toluPassword}}" },
