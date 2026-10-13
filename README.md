@@ -384,6 +384,28 @@ An alert is written for every settled movement on a customer's wallet: a credit 
 
 ---
 
+## Performance under load
+
+`postman/load-test.mjs` simulates N customers at once, each signing in and loading what the Home page loads (profile, wallets, invoices, notifications, recommendations). It's read-only, and it prints p50, p95 and p99 per request type with the error count. Measured on a laptop (Intel i3, 2 cores) against Postgres on Supabase in another region (Ireland), so every query crosses the internet; a server next to its database will be faster.
+
+| Scenario | Users at once | Requests | Errors | p50 | p95 |
+|---|---|---|---|---|---|
+| Separate customers (sign-in + Home) | 10 | 60 | 0 | 340 ms | 1,505 ms |
+| Separate customers | 50 | 300 | 0 | 830 ms | 6,006 ms |
+| Separate customers | 100 | 600 | 0 | 2,378 ms | 10,320 ms |
+| One customer with a lot of data, 100 sessions | 100 | 500 | 0 | 2,220 ms | 5,562 ms |
+
+What the load test found and what was fixed:
+- **Sign-ins refused under load.** The failed-sign-in limit was keyed by IP. It counts each attempt as it arrives, so 10+ customers signing in at once were refused (15 of 25). On Render every customer also looked like the proxy's IP, so ten wrong passwords from anyone locked everyone out. Now the limit is per account with a per-IP ceiling, and the API trusts Render's proxy. Result: 100/100 concurrent sign-ins succeed, and the lockout still works per account.
+- **Recommendations slowed everything.** Each call loaded the customer's whole snapshot (11 queries, including 400 days of transactions), so one request could take all 10 database connections. The fixes:
+  - the recommendations load only what they use (8 queries);
+  - the email log is read once per invoice instead of twice;
+  - all queries run at once;
+  - identical requests in flight share one load.
+
+  Results with 100 sessions of a data-heavy customer: recommendations p50 went from 31.7 s to 2.1 s, overall p95 from 31.5 s to 5.6 s, and throughput from 11.5 to 33.2 requests/s, with identical results.
+- **Still to tune:** sign-in is the slowest step under load (bcrypt at cost 12 is deliberately CPU-heavy, about 0.25–0.6 s each here). The database pool size is configurable (`DB_POOL_MAX`, default 10).
+
 ## Security at a glance
 
 - **Profile photos:** JPG or PNG only, checked by the file's bytes rather than its name, 2 MB at most, with a pixel limit against decompression bombs. Each photo is re-encoded, which strips metadata such as GPS location. Photos are kept in Postgres and served only to their signed-in owner (anyone else gets `404`).
@@ -400,7 +422,7 @@ An alert is written for every settled movement on a customer's wallet: a credit 
 
 ## Testing
 
-The whole API is exercised by a Postman suite, [`postman/vergepay-api.postman_collection.json`](postman/vergepay-api.postman_collection.json): **1,055 requests and 1,781 assertions**, grouped into 23 folders from sign-up to brokerage disconnection. It isn't just happy paths:
+The whole API is exercised by a Postman suite, [`postman/vergepay-api.postman_collection.json`](postman/vergepay-api.postman_collection.json): **1,059 requests and 1,789 assertions**, grouped into 23 folders from sign-up to brokerage disconnection. It isn't just happy paths:
 
 - **Every edge case:** validation, wrong owner, wrong state (`409`), insufficient funds, replayed keys, and retries after a simulated crash.
 - **Races:** simultaneous payments, refunds, repayments and sign-ins, fired at the same instant from test scripts.
@@ -427,7 +449,7 @@ npm run flw:stand-in           # terminal 1: Flutterwave stand-in on :9999
 npm run alpaca:stand-in        # terminal 2: Alpaca stand-in on :9998
 npm run start:with-stand-in    # terminal 3: the API, pointed at the stand-ins
 npm run worker:with-stand-in   # terminal 4: the background worker (needs REDIS_URL)
-npm run test:postman           # terminal 5: runs all 1,055 requests with Newman
+npm run test:postman           # terminal 5: runs all 1,059 requests with Newman
 npm run test:realtime          # then: the live WebSocket checks (API_URL=... for another port)
 ```
 

@@ -23,18 +23,35 @@ export const SPEND_LABEL = {
   card_payment: "Card payments",
 };
 
-export async function loadSnapshot(db, userId) {
-  const user = (
-    await db.query(
+// Identical snapshots asked for at the same moment (one customer, several
+// tabs or requests) share one load. Nothing is kept once it's answered, so
+// nothing goes stale.
+const inFlight = new Map();
+
+/**
+ * `light: true` skips what only the assistant's chat needs: money in and out
+ * (400 days of transactions), clients with their health scores, and payroll
+ * runs. The recommendations use the light snapshot.
+ */
+export function loadSnapshot(db, userId, { light = false } = {}) {
+  const key = `${userId}:${light ? "light" : "full"}`;
+  if (!inFlight.has(key)) {
+    inFlight.set(key, load(db, userId, light).finally(() => inFlight.delete(key)));
+  }
+  return inFlight.get(key);
+}
+
+const none = { rows: [] };
+
+async function load(db, userId, light) {
+  // all at once: "today" in the customer's timezone comes from the users row in SQL
+  const [users, accounts, invoices, clients, payees, runs, goals, loans, plans, moves] = await Promise.all([
+    db.query(
       `SELECT user_id, username, first_name, timezone, kyc_status, two_factor_enabled,
               (NOW() AT TIME ZONE timezone)::date::text AS today
        FROM users WHERE user_id = $1`,
       [userId],
-    )
-  ).rows[0];
-  if (!user) return null;
-
-  const [accounts, invoices, clients, payees, runs, goals, loans, plans, moves] = await Promise.all([
+    ),
     db.query(
       `SELECT a.account_id, a.account_number, a.account_type, a.purpose, a.currency_code, a.balance_minor, a.account_status, a.created_at,
               EXISTS (SELECT 1 FROM goals g WHERE g.account_id = a.account_id) AS is_goal
@@ -44,24 +61,30 @@ export async function loadSnapshot(db, userId) {
     db.query(
       `SELECT i.invoice_id, i.invoice_number, i.amount_due_minor, i.currency_code,
               to_char(i.due_date, 'YYYY-MM-DD') AS due_date,
-              CASE WHEN i.invoice_status = 'open' AND i.due_date < $2::date THEN 'overdue' ELSE i.invoice_status::text END AS status,
+              CASE WHEN i.invoice_status = 'open' AND i.due_date < (NOW() AT TIME ZONE me.timezone)::date THEN 'overdue' ELSE i.invoice_status::text END AS status,
               i.sent_at, i.paid_at, i.created_at, i.cancelled_at, i.refunded_at, i.recurring_plan_id,
               c.client_id,
               COALESCE(c.name, NULLIF(concat_ws(' ', bu.first_name, bu.last_name), ''), bu.username) AS client_name,
               COALESCE(c.client_id::text, 'user:' || bu.user_id::text, i.invoice_id::text) AS payer_key,
-              (SELECT max(e.created_at) FROM email_log e WHERE e.invoice_id = i.invoice_id AND e.kind = 'reminder') AS last_reminder_at,
+              em.last_reminder_at,
               -- a reminder can go an hour after the last email (invoice or reminder), as the API allows
-              (SELECT max(e.created_at) FROM email_log e WHERE e.invoice_id = i.invoice_id AND e.kind IN ('invoice', 'reminder')) AS last_emailed_at
+              em.last_emailed_at
        FROM invoices i
        LEFT JOIN clients c ON c.client_id = i.client_id
        LEFT JOIN account ba ON ba.account_id = i.account_id AND i.client_id IS NULL
        LEFT JOIN users bu ON bu.user_id = ba.user_id
+       JOIN users me ON me.user_id = i.issuer_user_id
+       LEFT JOIN LATERAL (
+         SELECT max(e.created_at) FILTER (WHERE e.kind = 'reminder') AS last_reminder_at,
+                max(e.created_at) AS last_emailed_at
+         FROM email_log e WHERE e.invoice_id = i.invoice_id AND e.kind IN ('invoice', 'reminder')
+       ) em ON TRUE
        WHERE i.issuer_user_id = $1`,
-      [userId, user.today],
+      [userId],
     ),
-    loadClients(db, userId, "AND c.archived_at IS NULL"),
+    light ? [] : loadClients(db, userId, "AND c.archived_at IS NULL"),
     loadPayees(db, userId),
-    loadRuns(db, userId, "", [], "ORDER BY r.created_at DESC LIMIT 1000"),
+    light ? [] : loadRuns(db, userId, "", [], "ORDER BY r.created_at DESC LIMIT 1000"),
     loadGoals(db, userId, "AND g.goal_status = 'active'"),
     db.query(`${LOAN_WITH_PROGRESS} WHERE acc.user_id = $1 AND l.loan_status IN ('active', 'defaulted') ORDER BY l.created_at`, [userId]),
     db.query(
@@ -72,7 +95,7 @@ export async function loadSnapshot(db, userId) {
       [userId],
     ),
     // money that moved in or out of the customer's accounts, about 13 months back
-    db.query(
+    light ? none : db.query(
       `SELECT t.transaction_id, t.transaction_type::text AS type, t.status::text AS status, t.amount_minor, t.currency_code,
               t.created_at, t.sender_account_id, t.receiver_account_id,
               sa.account_number AS sender_number, ra.account_number AS receiver_number,
@@ -86,6 +109,8 @@ export async function loadSnapshot(db, userId) {
       [userId],
     ),
   ]);
+  const user = users.rows[0];
+  if (!user) return null;
 
   // what paying each loan off today would cost (the same quote as the loan page)
   const schedules = new Map();
