@@ -1,4 +1,4 @@
-import { byCurrency, day, daysBetween, money, moneyList, plural } from "./format.js";
+import { byCurrency, day, daysBetween, minutesUntilRemind, money, moneyList, plural, remindOrOpen } from "./format.js";
 import { addDays } from "./periods.js";
 
 // "What to do next": a short, ranked list built by plain rules from the
@@ -24,7 +24,7 @@ export function buildRecommendations(s) {
     seenClients.add(who);
     const late = daysBetween(i.due_date, s.today);
     const remindedAgo = i.last_reminder_at ? Math.floor((Date.now() - new Date(i.last_reminder_at).getTime()) / DAY_MS) : null;
-    const canRemind = remindedAgo === null || remindedAgo >= 1;
+    const wait = minutesUntilRemind(i);
     add({
       key: `overdue:${i.invoice_id}`,
       kind: "collect",
@@ -33,8 +33,8 @@ export function buildRecommendations(s) {
       title: `Chase ${i.client_name ?? "your client"}: ${money(i.amount_due_minor, i.currency_code)} is ${plural(late, "day")} late`,
       body: `${i.invoice_number ?? "The invoice"} was due ${day(i.due_date, s.today)}. ${
         remindedAgo === null ? "No reminder sent yet." : remindedAgo === 0 ? "You reminded them today." : `Last reminder ${plural(remindedAgo, "day")} ago.`
-      }`,
-      action: canRemind ? { label: "Send reminder", kind: "remind", invoice_id: i.invoice_id } : { label: "Open invoice", href: `/dashboard/invoices/${i.invoice_id}` },
+      }${wait ? ` You can send a reminder in ${plural(wait, "minute")}.` : ""}`,
+      action: remindOrOpen(i, "Send reminder"),
     });
   }
   const soon = s.invoices.filter((x) => x.status === "open" && x.due_date >= s.today && x.due_date <= addDays(s.today, 3) && !x.last_reminder_at);
@@ -46,7 +46,7 @@ export function buildRecommendations(s) {
       priority: 35,
       title: `${i.client_name ?? "A client"}'s ${money(i.amount_due_minor, i.currency_code)} is due ${i.due_date === s.today ? "today" : day(i.due_date, s.today)}`,
       body: "A friendly reminder before the due date gets invoices paid sooner.",
-      action: { label: "Send reminder", kind: "remind", invoice_id: i.invoice_id },
+      action: remindOrOpen(i, "Send reminder"),
     });
   }
   const oldDrafts = s.drafts.filter((d) => Date.now() - new Date(d.created_at).getTime() > 2 * DAY_MS);

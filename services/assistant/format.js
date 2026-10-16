@@ -20,6 +20,19 @@ export function moneyList(totals, empty = "₦0.00") {
 
 export const plural = (n, word, many = `${word}s`) => `${n} ${n === 1 ? word : many}`;
 
+/** Minutes until the client can be reminded (the API allows one email an hour), or 0. */
+export function minutesUntilRemind(invoice, now = Date.now()) {
+  if (!invoice.last_emailed_at) return 0;
+  return Math.max(0, Math.ceil(60 - (now - new Date(invoice.last_emailed_at).getTime()) / 60_000));
+}
+
+/** "Send reminder" if it can go now, otherwise a link to the invoice. */
+export function remindOrOpen(invoice, label) {
+  return minutesUntilRemind(invoice) === 0
+    ? { label, kind: "remind", invoice_id: invoice.invoice_id }
+    : { label: "Open invoice", href: `/dashboard/invoices/${invoice.invoice_id}` };
+}
+
 /** "2026-10-09" → "9 Oct" (with the year if it isn't `today`'s). */
 export function day(date, today) {
   const [y, m, d] = date.split("-").map(Number);

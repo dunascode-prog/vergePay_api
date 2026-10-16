@@ -3356,7 +3356,7 @@ const assistant = [
 
   askQ("Who owes me the most?", "who owes me the most?", [
     ["Kola Ventures, ₦50,000.00, overdue", 'j.intent === "top_debtor" && j.answer.startsWith("Kola Ventures owes you the most: ₦50,000.00 across 1 invoice, ₦50,000.00 of it overdue")'],
-    ["a reminder action for that invoice", 'j.actions[0].kind === "remind" && j.actions[0].invoice_id === v("asInvoiceId")'],
+    ["emailed under an hour ago, so a link to the invoice rather than a reminder (the API allows one an hour)", 'j.actions[0].href === "/dashboard/invoices/" + v("asInvoiceId") && !j.actions[0].kind'],
   ]),
   askQ("Which invoices are overdue?", "any late invoices?", [["overdue, 9 days late", 'j.intent === "overdue" && j.answer.includes("Kola Ventures · ₦50,000.00 · 9 days late")']]),
   askQ("How much does Kola owe me? (a client by name)", "how much does kola owe me", [["owed by that client", 'j.intent !== null && j.answer.startsWith("Kola Ventures owes you ₦50,000.00")']]),
@@ -3368,7 +3368,8 @@ const assistant = [
 
   // recommendations, and dismissing one
   recs("Recommendations: chase Kola first", [
-    ["the overdue invoice comes first, with a reminder", 'j.data[0].key === "overdue:" + v("asInvoiceId") && j.data[0].action.kind === "remind" && j.data[0].title === "Chase Kola Ventures: ₦50,000.00 is 9 days late"'],
+    ["the overdue invoice comes first", 'j.data[0].key === "overdue:" + v("asInvoiceId") && j.data[0].title === "Chase Kola Ventures: ₦50,000.00 is 9 days late"'],
+    ["just emailed: says when a reminder can go, links to the invoice meanwhile", '/You can send a reminder in \\d+ minutes?\\./.test(j.data[0].body) && j.data[0].action.label === "Open invoice"'],
   ]),
   askQ("What should I do next?", "what should I do next", [["the recommendations, Kola first", 'j.intent === "next_steps" && j.answer.includes("1. Chase Kola Ventures")']]),
   req("Dismiss it for 3 days", "POST", "/recommendations/overdue:{{asInvoiceId}}/dismiss", { body: { days: 3 }, status: 200, checks: [["dismissed", "j.dismissed_for_days === 3"]] }),
@@ -3676,7 +3677,7 @@ const main = collection(
     folder("18. Forgot password", "Resetting a forgotten password with an emailed 6-digit code: the same answer whether or not the account exists, one email a minute at most, 5 tries per code, the password rules, expiry after 15 minutes, a code that works once, and every session ended by the reset. A fresh customer; the code is read from the email log through /dev/emails/latest.", forgotPassword),
     folder("19. Changing email", "Changing the email address: the password (and a recent 2FA code when 2FA is on) checked before anything is sent, a code to the new address, the change pending until it's confirmed, 5 tries, the old address told with the new one masked, still signed in, signing in with the new address only, expiry and cancelling. A fresh customer.", emailChange),
     folder("20. Profile photo", "Uploading a profile photo, kept in Postgres: JPG or PNG only, checked by its bytes, 2 MB at most, at least 100 × 100; stored as a 512 × 512 JPEG with the metadata stripped; fetched only by its owner, cached for good under a URL that changes with each photo; replacing and removing. Two fresh customers.", profilePhoto),
-    folder("21. Ask VergePay and recommendations", "The assistant answers from the customer's own data (who owes them, what's overdue, a client by name, spending, balance), declines off-topic questions, and validates input; recommendations rank an overdue invoice first with a reminder action, and a dismissed one stays hidden. The small model runs in the API; the optional open model is off here. A fresh customer.", assistant),
+    folder("21. Ask VergePay and recommendations", "The assistant answers from the customer's own data (who owes them, what's overdue, a client by name, spending, balance), declines off-topic questions, and validates input; recommendations rank an overdue invoice first (offering a reminder only once the API's one-an-hour limit allows it), and a dismissed one stays hidden. The small model runs in the API; the optional open model is off here. A fresh customer.", assistant),
     folder("22. Wrap-up", "The 2FA brute-force limit, resetting the test users, and logout.", wrapUp),
   ],
 );

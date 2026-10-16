@@ -1,4 +1,4 @@
-import { byCurrency, day, daysBetween, findByName, listWords, money, moneyList, plural } from "./format.js";
+import { byCurrency, day, daysBetween, findByName, listWords, money, moneyList, plural, remindOrOpen } from "./format.js";
 import { addDays, defaultPeriod, inPeriod, parsePeriod } from "./periods.js";
 
 // The questions VergePay's assistant can answer. Each has example phrasings
@@ -94,7 +94,7 @@ export const INTENTS = [
         text: `${top.name} owes you the most: ${moneyList(byCurrency(top.items))} across ${plural(top.items.length, "invoice")}${
           late.length ? `, ${moneyList(byCurrency(late))} of it overdue` : ""
         }.${next.length ? ` Next: ${listWords(next)}.` : ""}`,
-        actions: oldest ? [{ label: `Remind ${top.name}`, kind: "remind", invoice_id: oldest.invoice_id }] : [{ label: "See unpaid invoices", href: "/dashboard/invoices" }],
+        actions: oldest ? [remindOrOpen(oldest, `Remind ${top.name}`)] : [{ label: "See unpaid invoices", href: "/dashboard/invoices" }],
       };
     },
   },
@@ -109,7 +109,7 @@ export const INTENTS = [
       return {
         text: `${plural(list.length, "invoice")} ${list.length === 1 ? "is" : "are"} overdue, ${moneyList(byCurrency(list))} in all:\n${lines.map((l) => `• ${l}`).join("\n")}${list.length > 5 ? `\n…and ${list.length - 5} more.` : ""}`,
         actions: [
-          { label: `Remind ${clientLabel(list[0])}`, kind: "remind", invoice_id: list[0].invoice_id },
+          remindOrOpen(list[0], `Remind ${clientLabel(list[0])}`),
           { label: "See overdue invoices", href: "/dashboard/invoices" },
         ],
       };
