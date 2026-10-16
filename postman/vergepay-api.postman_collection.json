@@ -439,6 +439,266 @@
           }
         },
         {
+          "name": "25 new customers sign up at once (for the next check)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"burstRun\", String(Date.now()));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const url = pm.variables.replaceIn(\"{{baseUrl}}/auth/signup\");",
+                  "const codes = [];",
+                  "for (let i = 0; i < 25; i++) {",
+                  "  pm.sendRequest({",
+                  "    url, method: \"POST\",",
+                  "    header: Object.assign({ \"Content-Type\": \"application/json\", \"Idempotency-Key\": pm.variables.replaceIn(\"{{$guid}}\") }, {}),",
+                  "    body: { mode: \"raw\", raw: JSON.stringify({ username: \"burst\" + i + \"_\" + pm.collectionVariables.get(\"burstRun\"), email: \"burst\" + i + \"_\" + pm.collectionVariables.get(\"burstRun\") + \"@vergepay.dev\", password: \"VergePay#Test2026\", confirmPassword: \"VergePay#Test2026\" }) },",
+                  "  }, (err, res) => {",
+                  "    codes.push(err ? 0 : res.code);",
+                  "    if (codes.length === 25) {",
+                  "      codes.sort();",
+                  "      pm.collectionVariables.set(\"lastConcurrentCodes\", JSON.stringify(codes));",
+                  "      pm.test(\"all 25 created\" + \" (\" + codes.join(\", \") + \")\", () => pm.expect(codes.every((c) => c === 201)).to.be.true);",
+                  "    }",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/signin",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "signin"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{toluEmail}}\",\n  \"password\": \"{{toluPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Sets up 25 accounts for the burst of sign-ins that follows.\n\nThe request itself is a harmless POST /auth/signin; its test script fires 25 POST /auth/signup requests at the same moment and counts the outcomes.\n\n**Expect:** 200\n\n**Checks:**\n- all 25 created"
+          }
+        },
+        {
+          "name": "Concurrent: 25 customers sign in at the same moment",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const url = pm.variables.replaceIn(\"{{baseUrl}}/auth/signin\");",
+                  "const codes = [];",
+                  "for (let i = 0; i < 25; i++) {",
+                  "  pm.sendRequest({",
+                  "    url, method: \"POST\",",
+                  "    header: Object.assign({ \"Content-Type\": \"application/json\", \"Idempotency-Key\": pm.variables.replaceIn(\"{{$guid}}\") }, {}),",
+                  "    body: { mode: \"raw\", raw: JSON.stringify({ email: \"burst\" + i + \"_\" + pm.collectionVariables.get(\"burstRun\") + \"@vergepay.dev\", password: \"VergePay#Test2026\" }) },",
+                  "  }, (err, res) => {",
+                  "    codes.push(err ? 0 : res.code);",
+                  "    if (codes.length === 25) {",
+                  "      codes.sort();",
+                  "      pm.collectionVariables.set(\"lastConcurrentCodes\", JSON.stringify(codes));",
+                  "      pm.test(\"all 25 succeed (customers signing in together from one network don't lock each other out)\" + \" (\" + codes.join(\", \") + \")\", () => pm.expect(codes.every((c) => c === 200)).to.be.true);",
+                  "    }",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/signin",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "signin"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{toluEmail}}\",\n  \"password\": \"{{toluPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Regression check, found by the load test: the failed-sign-in limit counts each attempt as it arrives and takes successful ones off only when they finish. With one key for a whole IP address (and on Render every customer looked like the proxy's IP), 10+ customers signing in at the same moment were refused, and 10 wrong passwords from anyone locked everyone out. The limit is now kept per account, with a high per-IP ceiling, and the API trusts Render's proxy.\n\nThe request itself is a harmless POST /auth/signin; its test script fires 25 POST /auth/signin requests at the same moment and counts the outcomes.\n\n**Expect:** 200\n\n**Checks:**\n- all 25 succeed (customers signing in together from one network don't lock each other out)"
+          }
+        },
+        {
+          "name": "Wrong password until locked out (an account that doesn't exist)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"lockEmail\", \"lock_\" + Date.now() + \"@vergepay.dev\");"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 401\", () => pm.response.to.have.status(401));",
+                  "const codes = [];",
+                  "const next = () => pm.sendRequest({",
+                  "  url: pm.variables.replaceIn(\"{{baseUrl}}/auth/signin\"), method: \"POST\",",
+                  "  header: { \"Content-Type\": \"application/json\" }, body: { mode: \"raw\", raw: JSON.stringify({ email: pm.collectionVariables.get(\"lockEmail\"), password: \"Wrong#Password2026\" }) },",
+                  "}, (err, res) => {",
+                  "  codes.push(res.code);",
+                  "  if (res.code !== 429 && codes.length < 12) return next();",
+                  "  pm.test(\"a 429 arrives within 12 wrong passwords for one account (\" + codes.join(\", \") + \")\", () => pm.expect(codes).to.include(429));",
+                  "});",
+                  "next();"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/signin",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "signin"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"nobody_{{$timestamp}}@vergepay.dev\",\n  \"password\": \"Wrong#Password2026\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Sends wrong passwords for one address until the per-account limit answers 429 (MAX_FAILED_LOGIN_ATTEMPTS_SIGNIN, 5 by default).\n\n**Expect:** 401\n\n**Checks:**\n- a 429 arrives within 12 wrong passwords for one account"
+          }
+        },
+        {
+          "name": "Another account still signs in (the lockout is per account)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "const v = (k) => pm.collectionVariables.get(k);",
+                  "const n = (k) => Number(pm.collectionVariables.get(k));",
+                  "const replayed = pm.response.headers.get(\"Idempotent-Replayed\") === \"true\";",
+                  "const errorCode = j.error && j.error.code;",
+                  "const errorMessage = (j.error && j.error.message) || \"\";",
+                  "const qp = (url, key) => { const m = String(url || \"\").match(new RegExp(\"[?&]\" + key + \"=([^&#]*)\")); return m ? decodeURIComponent(m[1].replace(/\\+/g, \" \")) : null; };",
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/signin",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "signin"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{adaEmail}}\",\n  \"password\": \"{{adaPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "**Expect:** 200"
+          }
+        },
+        {
           "name": "Sign in (Tolu)",
           "event": [
             {

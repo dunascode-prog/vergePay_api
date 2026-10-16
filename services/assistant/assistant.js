@@ -16,7 +16,7 @@ const answerable = INTENTS.filter((i) => i.answer || i.id === "next_steps");
 
 /** Recommendations not dismissed (or whose snooze has run out), best first. */
 export async function activeRecommendations(db, userId, snapshot) {
-  const s = snapshot ?? (await loadSnapshot(db, userId));
+  const s = snapshot ?? (await loadSnapshot(db, userId, { light: true }));
   const dismissed = await db.query(
     `SELECT rec_key FROM recommendation_dismissals WHERE user_id = $1 AND dismissed_until > NOW()`,
     [userId],
@@ -96,7 +96,7 @@ export async function ask(db, userId, question) {
 
 /** Starter questions, chosen from what's in the customer's data. */
 export async function starterQuestions(db, userId) {
-  const s = await loadSnapshot(db, userId);
+  const s = await loadSnapshot(db, userId, { light: true });
   const q = ["What should I do next?"];
   if (s.invoices.some((i) => i.status === "overdue")) q.push("Which invoices are overdue?");
   if (s.invoices.some((i) => i.status === "open" || i.status === "overdue")) q.push("Who owes me the most?");
