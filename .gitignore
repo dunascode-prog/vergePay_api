@@ -95,3 +95,8 @@ CLAUDE_CHANGELOG.md
 # Newman's report from npm run test:postman
 postman/last-run.json
 .model-cache
+
+# ==========================
+# Database backups (scripts/backup-db.sh): customer data, never committed
+# ==========================
+backups/

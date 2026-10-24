@@ -478,6 +478,20 @@ npm run worker          # the background worker (brokerage syncs, email, recurri
 
 Card and bank-transfer endpoints answer `503` until the Flutterwave keys are set, and investments until the Alpaca keys and Redis are set; everything else works without them. Development-only helpers (`/v1/dev/*`, for test top-ups, suite resets, and deciding your own loan application or backdating its installments so the app's loan screens can be tried without the back-office key) are never mounted when `NODE_ENV=production`.
 
+### Database backups (Linux)
+
+[`scripts/backup-db.sh`](scripts/backup-db.sh) is a Bash script for a Linux machine (or WSL). It dumps the `public` schema with `pg_dump` into `backups/vergepay-<date>_<time>.sql.gz` and checks the file is complete before keeping it. It then deletes backups older than 7 days and logs every run to `backups/backup.log`. Overlapping runs are blocked with `flock`, and backup files are readable by your user only.
+
+```bash
+sudo apt install postgresql-client-17        # 17+: Supabase runs PostgreSQL 17 (PGDG apt repository)
+scripts/backup-db.sh                         # one backup now (reads DATABASE_URI from .env)
+scripts/backup-db.sh --restore-test          # restore the newest backup into a local scratch database and count rows
+crontab -e                                   # nightly at 02:00:
+# 0 2 * * * /path/to/vergePay_api/scripts/backup-db.sh >/dev/null 2>&1
+```
+
+`--restore-test` needs a local PostgreSQL 17+ server that your user can create databases on. `scripts/backup-db.sh --help` lists every setting.
+
 ---
 
 ## Project structure
